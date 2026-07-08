@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-from kol_analyze import (analyzer, docx_writer, loader, market, memory,
+from kol_analyze import (analyzer, docx_writer, engine, loader, market, memory,
                          metrics, scripts, vision)
 from kol_analyze.config import Settings
 from kol_analyze.market import MarketContext
@@ -51,7 +51,7 @@ def main(argv=None) -> int:
     if args.model:
         settings.model = settings.vision_model = args.model
     if args.offline:
-        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["KOL_FORCE_OFFLINE"] = "1"
 
     mem = memory.load(args.memory)
     if args.memory:
@@ -89,8 +89,7 @@ def main(argv=None) -> int:
           f"{len(script_analysis.migrations)} 条迁移建议、"
           f"{len(script_analysis.formats)} 类形式")
 
-    mode = "Claude" if os.environ.get("ANTHROPIC_API_KEY") else "规则兜底(offline)"
-    print(f"→ 生成分析（{mode}，model={settings.model}）…")
+    print(f"→ 生成分析（{engine.label()}，model={settings.model}）…")
     data = analyzer.analyze(analysis, script_analysis, settings, args.title, args.period)
 
     out = args.output or f"{args.title}_{args.period or '复盘'}.docx"

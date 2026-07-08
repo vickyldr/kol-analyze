@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 
-from . import prompts
+from . import engine, prompts
 from .config import Settings, Thresholds
 from .metrics import Analysis, LangMetrics
 from .scripts import ScriptAnalysis
@@ -25,25 +25,22 @@ def _extract_json(text: str) -> dict:
 
 def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
             title: str, period: str) -> dict:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if engine.available() == "offline":
         if not settings.allow_offline_fallback:
-            raise RuntimeError("未检测到 ANTHROPIC_API_KEY，且未允许离线兜底。")
+            raise RuntimeError("无可用的 Claude 引擎（订阅 CLI / API key 都没有），"
+                               "且未允许离线兜底。")
         return _offline(analysis, scripts, settings.thresholds, title, period)
 
-    import anthropic
-    client = anthropic.Anthropic()
     user = prompts.USER_TEMPLATE.format(
         title=title, period=period,
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
         facts=json.dumps(prompts.build_facts(analysis), ensure_ascii=False, indent=2),
         script_facts=json.dumps(prompts.build_script_facts(scripts),
                                 ensure_ascii=False, indent=2))
-    msg = client.messages.create(
-        model=settings.model, max_tokens=settings.max_tokens,
-        temperature=settings.temperature, system=prompts.SYSTEM,
-        messages=[{"role": "user", "content": user}])
-    text = "".join(b.text for b in msg.content
-                   if getattr(b, "type", "") == "text")
+    text = engine.generate_text(prompts.SYSTEM, user, settings.model,
+                                settings.max_tokens)
+    if not text:
+        return _offline(analysis, scripts, settings.thresholds, title, period)
     try:
         return _extract_json(text)
     except (json.JSONDecodeError, ValueError):

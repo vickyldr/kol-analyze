@@ -10,11 +10,10 @@
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 from pathlib import Path
 
+from . import engine
 from .config import Settings
 from .market import MarketContext, from_dict
 
@@ -41,33 +40,21 @@ _SYSTEM = """你从广告后台截图里读数字，输出 JSON，不要解释�
 }"""
 
 
-def _img_block(p: Path) -> dict:
-    media = _MEDIA.get(p.suffix.lower(), "image/png")
-    data = base64.standard_b64encode(p.read_bytes()).decode()
-    return {"type": "image",
-            "source": {"type": "base64", "media_type": media, "data": data}}
-
-
 def read_screenshots(image_paths, settings: Settings) -> MarketContext:
-    paths = [Path(p) for p in image_paths if Path(p).exists()]
+    paths = [str(Path(p)) for p in image_paths if Path(p).exists()]
     if not paths:
         return MarketContext()
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if engine.available() == "offline":
         return MarketContext(notes=[
-            f"（已忽略 {len(paths)} 张截图：未设置 ANTHROPIC_API_KEY，无法读图。"
-            "可改用 --market market.json 手填大盘数据。）"])
+            f"（已忽略 {len(paths)} 张截图：没有可用的 Claude 引擎读图。"
+            "可在页面里手填大盘数据，或改用 --market market.json。）"])
 
-    import anthropic
-    client = anthropic.Anthropic()
-    content = [_img_block(p) for p in paths]
-    content.append({"type": "text", "text": "把这些截图读成约定的 JSON。"})
-    msg = client.messages.create(
-        model=settings.vision_model, max_tokens=3000,
-        system=_SYSTEM, messages=[{"role": "user", "content": content}])
-    text = "".join(b.text for b in msg.content
-                   if getattr(b, "type", "") == "text").strip()
+    text = engine.read_images(_SYSTEM, "把这些截图读成约定的 JSON，只输出 JSON。",
+                              paths, settings.vision_model)
+    if not text:
+        return MarketContext(notes=["（截图解析失败，已跳过大盘回填。）"])
     try:
         s, e = text.find("{"), text.rfind("}")
         return from_dict(json.loads(text[s:e + 1]))
     except (json.JSONDecodeError, ValueError):
-        return MarketContext(notes=["（截图解析失败，已跳过大盘回填。）"])
+        return MarketContext(notes=["（截图解析结果非 JSON，已跳过大盘回填。）"])
