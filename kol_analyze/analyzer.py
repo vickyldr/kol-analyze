@@ -24,7 +24,7 @@ def _extract_json(text: str) -> dict:
 
 
 def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
-            title: str, period: str) -> dict:
+            title: str, period: str, mem=None) -> dict:
     if engine.available() == "offline":
         if not settings.allow_offline_fallback:
             raise RuntimeError("无可用的 Claude 引擎（订阅 CLI / API key 都没有），"
@@ -32,7 +32,7 @@ def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
         return _offline(analysis, scripts, settings.thresholds, title, period)
 
     user = prompts.USER_TEMPLATE.format(
-        title=title, period=period,
+        title=title, period=period, style=prompts.style_block(mem),
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
         facts=json.dumps(prompts.build_facts(analysis), ensure_ascii=False, indent=2),
         script_facts=json.dumps(prompts.build_script_facts(scripts),
@@ -45,6 +45,19 @@ def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
         return _extract_json(text)
     except (json.JSONDecodeError, ValueError):
         return _offline(analysis, scripts, settings.thresholds, title, period)
+
+
+def revise_passage(scope: str, text: str, instruction: str, reason: str,
+                   settings: Settings) -> str | None:
+    """让 Claude 只重写复盘里的一段。返回改后的文字；不可用/失败返回 None。"""
+    if engine.available() == "offline":
+        return None
+    user = prompts.REVISE_USER.format(
+        scope=scope, text=text, instruction=instruction,
+        reason_line=(f"（我觉得原来不好的原因：{reason}）" if reason else ""))
+    out = engine.generate_text(prompts.REVISE_SYSTEM, user, settings.model,
+                               max_tokens=1500, timeout=120)
+    return out.strip() if out else None
 
 
 # --------------------------------------------------------------------------

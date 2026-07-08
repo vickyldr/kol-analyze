@@ -395,6 +395,9 @@ function renderMemory(){
     ${v.note?`<div class="rn">${v.note}</div>`:''}</div>`});
   Object.entries(m.influencer_alias||{}).forEach(([k,v])=>{h+=`<div class="rule"><div class="rh">🎭 红人别名</div><div><span class="chip">${k}</span> → <span class="chip s">${v}</span></div></div>`});
   Object.entries(m.lang_overrides||{}).forEach(([k,v])=>{h+=`<div class="rule"><div class="rh">🌐 语言纠正</div><div class="adname">${k}</div> → <span class="lang">${v}</span></div>`});
+  (m.style_notes||[]).forEach(s=>{h+=`<div class="rule"><div class="rh">✍️ 写作偏好</div>
+    <div style="font-size:12.5px">${s.instruction||''}</div>${s.reason?`<div class="rn">因为：${s.reason}</div>`:''}
+    ${s.scope&&s.scope!=='general'?`<div class="rn">位置：${s.scope}</div>`:''}</div>`});
   el('memPanel').innerHTML=h||'<div class="desc">还没有修正。点素材行的「修正」即可积累。</div>';
 }
 function renderInsight(){
@@ -468,14 +471,62 @@ async function generate(){
 async function poll(){
   let s=await jget('/api/status');
   if(s.status==='running'){setTimeout(poll,2500);return}
-  if(s.status==='done'){loadHistory();el('genBody').innerHTML=`<div style="font-size:34px">✅</div>
-    <div style="margin:12px 0;font-weight:700;font-size:16px">复盘文档已生成，并已归档进历史</div>
-    <a class="primary" style="text-decoration:none;padding:11px 22px" href="/api/download">下载 docx ↓</a>
-    <div style="margin-top:16px"><button class="ghost" onclick="backToReview()">← 返回继续修正</button></div>`;}
+  if(s.status==='done'){loadHistory();renderEditor();}
   else{el('genBody').innerHTML='生成失败：'+(s.error||'未知错误')+'<div style="margin-top:14px"><button class="ghost" onclick="backToReview()">← 返回</button></div>';}
 }
 function backToReview(){el('view-done').classList.add('hidden');el('view-review').classList.remove('hidden');
   el('st3').className='step';el('st2').className='step active';el('genBtn').disabled=false}
+
+// ---- 生成后：预览 & 修订 ----
+let BLOCKS=[];
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+async function renderEditor(){
+  let j=await jget('/api/report'); if(!j.ok){el('genBody').innerHTML=j.error||'无结果';return}
+  BLOCKS=j.blocks;
+  let cards=BLOCKS.map((b,i)=>{
+    let rows=Math.min(14,Math.max(2,b.text.split('\n').length+1));
+    let ai=j.can_ai?`<button class="fixbtn" onclick="toggleAI(${i})">让 AI 改</button>`:'';
+    return `<div class="card"><div class="bd">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div class="eyebrow">${esc(b.label)}</div><div style="flex:1"></div>${ai}</div>
+      <textarea id="ta-${i}" rows="${rows}" style="width:100%;resize:vertical">${esc(b.text)}</textarea>
+      <input type="text" id="rm-${i}" placeholder="（可选）记住：为什么这么改，下次照做" style="margin-top:6px;font-size:12px">
+      <div id="ai-${i}" class="hidden" style="margin-top:8px;background:var(--panel-2);padding:10px;border-radius:8px">
+        <input type="text" id="rs-${i}" placeholder="为什么觉得原来不好（可留空）" style="margin-bottom:6px">
+        <input type="text" id="in-${i}" placeholder="想改成什么样，如：更口语 / 点名具体红人玩法 / 别用套话">
+        <div style="margin-top:8px"><button class="primary" onclick="doRevise(${i})">让 AI 重写这段</button>
+          <span class="desc" id="stt-${i}" style="margin-left:8px"></span></div>
+      </div>
+    </div></div>`;
+  }).join('');
+  el('genBody').style.textAlign='left';
+  el('genBody').innerHTML=`
+    <div class="banner info" style="text-align:left">✏️ <b>可直接改</b>，或点每段「让 AI 改」并说明原因/想要的样子。
+      每次修订都会记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次生成自动照做。</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="primary" onclick="saveReport()">保存修改</button>
+      <button class="primary" style="background:var(--good)" onclick="downloadDoc()">下载 docx ↓</button>
+      <button class="ghost" onclick="backToReview()">← 返回修正命名</button>
+      <span class="desc" id="saveState" style="align-self:center"></span>
+    </div>${cards}`;
+}
+function toggleAI(i){el('ai-'+i).classList.toggle('hidden');el('in-'+i).focus()}
+async function doRevise(i){
+  let key=BLOCKS[i].key, instr=el('in-'+i).value.trim(), reason=el('rs-'+i).value.trim();
+  if(!instr){el('stt-'+i).textContent='请填想改成什么样';return}
+  el('stt-'+i).innerHTML='<span class="spin"></span> AI 重写中…';
+  let jr=await post('/api/revise',{key,instruction:instr,reason});
+  if(!jr.ok){el('stt-'+i).textContent=jr.error||'失败';return}
+  el('ta-'+i).value=jr.text; el('ta-'+i).style.height='auto'; el('ta-'+i).style.height=el('ta-'+i).scrollHeight+'px';
+  el('stt-'+i).textContent='已改 + 记进记忆库 ✓'; setTimeout(()=>el('ai-'+i).classList.add('hidden'),900);
+}
+async function saveReport(){
+  el('saveState').innerHTML='<span class="spin"></span> 保存中…';
+  let blocks=BLOCKS.map((b,i)=>{let n=el('rm-'+i).value.trim();return {key:b.key,text:el('ta-'+i).value,remember:!!n,note:n}});
+  await post('/api/report_save',{blocks});
+  el('saveState').textContent='已保存，docx 已更新 ✓';
+}
+async function downloadDoc(){await saveReport();window.location='/api/download'}
 
 let SNAP_ENGINE='Claude';
 (async()=>{

@@ -251,7 +251,8 @@ def api_generate():
     def worker(state):
         try:
             data = analyzer.analyze(state["analysis"], state["sa"], SETTINGS,
-                                    state["meta"]["title"], state["meta"]["period"])
+                                    state["meta"]["title"], state["meta"]["period"],
+                                    mem=state.get("mem"))
             out = _wd(state) / "复盘.docx"
             docx_writer.render(data, state["analysis"], state["sa"], out)
             created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
@@ -260,6 +261,7 @@ def api_generate():
                      "migrations": len(state["sa"].migrations)}
             entry = store.archive(state["product"], state["meta"]["period"] or "复盘",
                                   state["meta"]["title"], created, out, data, stats)
+            state["data"] = data
             state["gen"] = {"status": "done", "file": str(out), "hid": entry.id}
         except Exception as e:  # noqa
             state["gen"] = {"status": "error", "error": str(e)}
@@ -271,6 +273,151 @@ def api_generate():
 @app.get("/api/status")
 def api_status():
     return jsonify(_S()["gen"])
+
+
+# ---- 复盘预览 · 分块修订 ----
+
+_LIST_BLOCKS = {"script_section.migrations", "script_section.format_suggestions"}
+
+
+def _get_path(data, path):
+    cur = data
+    for p in path.split("."):
+        if isinstance(cur, list):
+            if not p.isdigit() or int(p) >= len(cur):
+                return None
+            cur = cur[int(p)]
+        elif isinstance(cur, dict):
+            cur = cur.get(p)
+        else:
+            return None
+        if cur is None:
+            return None
+    return cur
+
+
+def _set_path(data, path, val):
+    parts = path.split(".")
+    cur = data
+    for p in parts[:-1]:
+        cur = cur[int(p)] if isinstance(cur, list) else cur.setdefault(p, {})
+    last = parts[-1]
+    if isinstance(cur, list):
+        cur[int(last)] = val
+    else:
+        cur[last] = val
+
+
+def _apply_block(data, key, text):
+    if key in _LIST_BLOCKS:
+        _set_path(data, key, [x for x in text.split("\n") if x.strip()])
+    else:
+        _set_path(data, key, text)
+
+
+def _blocks(data):
+    out = []
+
+    def add(path, label):
+        v = _get_path(data, path)
+        if v is None:
+            return
+        text = "\n".join(v) if (path in _LIST_BLOCKS and isinstance(v, list)) else str(v)
+        out.append({"key": path, "label": label, "text": text,
+                    "list": path in _LIST_BLOCKS})
+
+    add("ad_section.overview", "一、广告部份 · 概述")
+    add("ad_section.caveat", "口径提醒")
+    add("gap_summary", "二、缺口分析 · 一句话总结")
+    add("script_section.overview", "四、素材/脚本 · 概述")
+    add("script_section.migrations", "跨语言迁移建议（每行一条）")
+    add("script_section.format_suggestions", "形式覆盖建议（每行一条）")
+    for i, l in enumerate(data.get("langs", [])):
+        nm = l.get("name", f"语言{i}")
+        add(f"langs.{i}.one_liner", f"{nm} · 定位")
+        add(f"langs.{i}.conversion", f"{nm} · 转化情况")
+        add(f"langs.{i}.creative_analysis", f"{nm} · 素材分析")
+        add(f"langs.{i}.todo", f"{nm} · todo")
+    for i, s in enumerate(data.get("script_section", {}).get("lang_strategies", [])):
+        nm = s.get("name", f"语言{i}")
+        add(f"script_section.lang_strategies.{i}.suggestion", f"{nm} · 脚本策略")
+    return out
+
+
+def _rerender(st: dict):
+    """把当前（可能已修订的）data 重渲染到工作 docx，并覆盖历史归档。"""
+    out = _wd(st) / "复盘.docx"
+    docx_writer.render(st["data"], st["analysis"], st["sa"], out)
+    st["gen"]["file"] = str(out)
+    hid = st["gen"].get("hid")
+    if hid:
+        store.update_entry(st["product"], hid, out, st["data"])
+
+
+@app.get("/api/report")
+def api_report():
+    st = _S()
+    if "data" not in st:
+        return jsonify({"ok": False, "error": "还没有生成结果。"})
+    return jsonify({"ok": True, "blocks": _blocks(st["data"]),
+                    "can_ai": engine.available() != "offline",
+                    "label": st["meta"].get("title", "")})
+
+
+@app.post("/api/revise")
+def api_revise():
+    st = _S()
+    if "data" not in st:
+        return jsonify({"ok": False, "error": "还没有生成结果。"})
+    body = request.get_json(force=True)
+    key = body.get("key", "")
+    instruction = body.get("instruction", "").strip()
+    reason = body.get("reason", "").strip()
+    if not instruction:
+        return jsonify({"ok": False, "error": "请填写想改成什么样。"})
+    old = _get_path(st["data"], key)
+    old_text = "\n".join(old) if isinstance(old, list) else str(old or "")
+    label = next((b["label"] for b in _blocks(st["data"]) if b["key"] == key), key)
+
+    new_text = analyzer.revise_passage(label, old_text, instruction, reason, SETTINGS)
+    if not new_text:
+        return jsonify({"ok": False, "error": "AI 修订不可用或失败（可手动改）。"})
+
+    _apply_block(st["data"], key, new_text)
+    # 记入记忆库（写作偏好，按产品）
+    mem = memory.load(store.memory_path(st["product"]))
+    created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
+    mem.add_style_note(scope=label, instruction=instruction, reason=reason, created=created)
+    mem.save(store.memory_path(st["product"]))
+    st["mem"] = mem
+    _rerender(st)
+    return jsonify({"ok": True, "key": key, "text": new_text,
+                    "list": key in _LIST_BLOCKS,
+                    "style_notes": len(mem.style_notes)})
+
+
+@app.post("/api/report_save")
+def api_report_save():
+    """保存手动修改（可选记入记忆库），重渲染 docx。"""
+    st = _S()
+    if "data" not in st:
+        return jsonify({"ok": False, "error": "还没有生成结果。"})
+    body = request.get_json(force=True)
+    remember = []
+    for b in body.get("blocks", []):
+        _apply_block(st["data"], b["key"], b.get("text", ""))
+        if b.get("remember") and b.get("note"):
+            remember.append((b["key"], b["note"]))
+    if remember:
+        mem = memory.load(store.memory_path(st["product"]))
+        created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
+        for key, note in remember:
+            label = next((x["label"] for x in _blocks(st["data"]) if x["key"] == key), key)
+            mem.add_style_note(scope=label, instruction=note, created=created)
+        mem.save(store.memory_path(st["product"]))
+        st["mem"] = mem
+    _rerender(st)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/download")

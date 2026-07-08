@@ -29,6 +29,15 @@ class Override:
 
 
 @dataclass
+class StyleNote:
+    """一条写作偏好（来自你对生成结果的修订）。下次生成会注入、务必遵守。"""
+    scope: str          # 针对哪块，如 gap_summary / 土耳其语.todo / general
+    instruction: str    # 想改成什么样
+    reason: str = ""    # 为什么不好 / 为什么想改
+    created: str = ""
+
+
+@dataclass
 class KeywordRule:
     match: str                                    # 命中的关键词（子串，忽略大小写）
     add_script: list[str] = field(default_factory=list)
@@ -43,6 +52,7 @@ class Memory:
     keyword_rules: list[KeywordRule] = field(default_factory=list)
     influencer_alias: dict[str, str] = field(default_factory=dict)
     lang_overrides: dict[str, str] = field(default_factory=dict)  # ad_name/play -> 语言代码
+    style_notes: list[StyleNote] = field(default_factory=list)    # 写作偏好
     path: Path | None = None
 
     # ---------------- 应用 ----------------
@@ -90,6 +100,11 @@ class Memory:
             set_script=set_script or [], add_script=add_script or [],
             set_format=set_format or [], add_format=add_format or [], note=note)
 
+    def add_style_note(self, scope: str, instruction: str, reason: str = "",
+                       created: str = "") -> None:
+        self.style_notes.append(StyleNote(scope=scope, instruction=instruction,
+                                          reason=reason, created=created))
+
     def save(self, path: str | Path | None = None) -> Path:
         p = Path(path or self.path or "memory/overrides.json")
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +127,9 @@ def to_dict(m: Memory) -> dict:
              "note": r.note} for r in m.keyword_rules],
         "influencer_alias": m.influencer_alias,
         "lang_overrides": m.lang_overrides,
+        "style_notes": [
+            {"scope": s.scope, "instruction": s.instruction,
+             "reason": s.reason, "created": s.created} for s in m.style_notes],
     }
 
 
@@ -130,6 +148,10 @@ def from_dict(data: dict, path: Path | None = None) -> Memory:
             for r in (data.get("keyword_rules") or [])],
         influencer_alias=data.get("influencer_alias", {}) or {},
         lang_overrides=data.get("lang_overrides", {}) or {},
+        style_notes=[
+            StyleNote(scope=s.get("scope", "general"), instruction=s.get("instruction", ""),
+                      reason=s.get("reason", ""), created=s.get("created", ""))
+            for s in (data.get("style_notes") or [])],
         path=path,
     )
 

@@ -109,11 +109,27 @@ def build_facts(analysis) -> dict:
     }
 
 
+def style_block(mem) -> str:
+    """把历史「写作偏好」渲染成注入文本；没有就返回空。"""
+    notes = getattr(mem, "style_notes", None) or []
+    if not notes:
+        return ""
+    lines = []
+    for n in notes:
+        loc = f"[{n.scope}] " if n.scope and n.scope != "general" else ""
+        why = f"（原因：{n.reason}）" if n.reason else ""
+        lines.append(f"- {loc}{n.instruction}{why}")
+    return ("【写作偏好 · 来自我过往的修订，必须遵守】\n"
+            "以下是我之前对复盘话术的反馈，这次生成请一并照做：\n"
+            + "\n".join(lines) + "\n")
+
+
 USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产出复盘 JSON。
 
 标题用：{title}
 周期用：{period}
 
+{style}
 严格按此结构输出（键名一致）：
 {schema}
 
@@ -123,3 +139,18 @@ USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产
 【素材/脚本维度】客观数据（用于 script_section）：
 {script_facts}
 """
+
+
+REVISE_SYSTEM = """你在帮我修订一份 KOL 广告复盘里的【某一段】文字。
+我会给你：这段的位置、原文、我的修改要求（为什么不好 / 想改成什么样）。
+请只重写这一段，保持投手复盘口吻、结论先行；只输出改后的文字本身，
+不要解释、不要引号、不要 markdown。"""
+
+
+REVISE_USER = """位置：{scope}
+原文：
+{text}
+
+我的修改要求：{instruction}
+{reason_line}
+请给出改后的这一段文字。"""

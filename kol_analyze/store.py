@@ -82,6 +82,16 @@ def archive(product: str, period: str, title: str, created: str,
     return HistoryEntry(hid, product, period, title, created, stats, hdir)
 
 
+def update_entry(product: str, hid: str, docx_path: Path, data: dict) -> None:
+    """用修订后的版本覆盖已有历史条目的 docx 与分析 JSON（不新建条目）。"""
+    hdir = product_dir(product) / "history" / _safe(hid)
+    if not hdir.exists():
+        return
+    shutil.copy(docx_path, hdir / "report.docx")
+    (hdir / "analysis.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def list_history(product: str) -> list[HistoryEntry]:
     hroot = product_dir(product) / "history"
     out: list[HistoryEntry] = []
