@@ -161,7 +161,8 @@ input[type=text],textarea,select{width:100%;border:1px solid var(--line);border-
         <div>
           <label class="fld">大盘截图（1~4 张：大盘分国家 / 设计vsKOL / KOL分国家 / 发布分语言）</label>
           <div class="drop" id="dropShot" onclick="document.getElementById('fShot').click()">
-            <b>点此选择</b> 或拖拽 · png / jpg<div class="filelist" id="fShotList"></div></div>
+            <b>点此选择</b> / 拖拽 / <b>直接 Ctrl+V 粘贴截图</b> · png / jpg
+            <div class="filelist" id="fShotList"></div></div>
           <input id="fShot" type="file" multiple accept="image/*" class="hidden">
         </div>
       </div>
@@ -269,16 +270,48 @@ function el(id){return document.getElementById(id)}
 function toggleTheme(){let r=document.documentElement;let c=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');r.setAttribute('data-theme',c==='dark'?'light':'dark')}
 
 // file pickers
-function wireDrop(dropId,inputId,arr,listId){
+function wireDrop(dropId,inputId,arr,listId,renderer){
   let d=el(dropId),i=el(inputId);
-  i.onchange=()=>{for(const f of i.files)arr.push(f);renderFiles(arr,listId)};
+  renderer=renderer||(()=>renderFiles(arr,listId));
+  i.onchange=()=>{for(const f of i.files)arr.push(f);renderer()};
   d.ondragover=e=>{e.preventDefault();d.classList.add('hi')};
   d.ondragleave=()=>d.classList.remove('hi');
-  d.ondrop=e=>{e.preventDefault();d.classList.remove('hi');for(const f of e.dataTransfer.files)arr.push(f);renderFiles(arr,listId)};
+  d.ondrop=e=>{e.preventDefault();d.classList.remove('hi');for(const f of e.dataTransfer.files)arr.push(f);renderer()};
 }
 function renderFiles(arr,listId){el(listId).textContent=arr.map(f=>f.name).join(' , ')}
+function renderShots(){
+  el('fShotList').innerHTML=shotFiles.map((f,i)=>{
+    let url=URL.createObjectURL(f);
+    return `<span style="display:inline-block;position:relative;margin:5px 6px 0 0">
+      <img src="${url}" style="height:48px;border-radius:6px;border:1px solid var(--line);vertical-align:middle">
+      <span onclick="event.stopPropagation();shotFiles.splice(${i},1);renderShots()" title="移除"
+        style="position:absolute;top:-6px;right:-6px;background:var(--crit);color:#fff;border-radius:50%;width:17px;height:17px;font-size:11px;line-height:17px;text-align:center;cursor:pointer">×</span></span>`;
+  }).join('');
+}
 wireDrop('dropData','fData',dataFiles,'fDataList');
-wireDrop('dropShot','fShot',shotFiles,'fShotList');
+wireDrop('dropShot','fShot',shotFiles,'fShotList',()=>renderShots());
+
+// 直接 Ctrl+V 粘贴截图
+document.addEventListener('paste', async e=>{
+  let items=(e.clipboardData||{}).items||[];
+  let imgs=[];
+  for(const it of items){
+    if(it.type && it.type.indexOf('image')===0){
+      let f=it.getAsFile();
+      if(f) imgs.push(new File([f], f.name||('截图-'+Date.now()+'-'+imgs.length+'.png'), {type:f.type}));
+    }
+  }
+  if(!imgs.length) return;       // 不是图片就不拦截（比如往输入框粘文字）
+  e.preventDefault();
+  if(el('view-review') && !el('view-review').classList.contains('hidden')){
+    el('banners').innerHTML='<div class="banner info"><span class="spin"></span> 正在识别粘贴的截图…</div>';
+    let fd=new FormData(); imgs.forEach(f=>fd.append('shots',f));
+    SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json(); render();
+  } else {
+    imgs.forEach(f=>shotFiles.push(f)); renderShots();
+    el('uploadHint').textContent='已粘贴 '+imgs.length+' 张截图（共 '+shotFiles.length+' 张），点「开始分析」。';
+  }
+});
 
 let PRODUCTS={};
 async function loadHistory(){
