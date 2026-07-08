@@ -7,7 +7,7 @@ import os
 
 from . import prompts
 from .config import Settings, Thresholds
-from .metrics import CountryMetrics, OverallMetrics
+from .metrics import Analysis, LangMetrics
 
 
 def _extract_json(text: str) -> dict:
@@ -16,138 +16,122 @@ def _extract_json(text: str) -> dict:
         text = text.split("```", 2)[1]
         if text.startswith("json"):
             text = text[4:]
-    # 截取第一个 { 到最后一个 }
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1:
-        text = text[start:end + 1]
+    s, e = text.find("{"), text.rfind("}")
+    if s != -1 and e != -1:
+        text = text[s:e + 1]
     return json.loads(text)
 
 
-def analyze(overall: OverallMetrics, settings: Settings,
+def analyze(analysis: Analysis, settings: Settings,
             title: str, period: str) -> dict:
-    facts = prompts.build_facts(overall)
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
         if not settings.allow_offline_fallback:
-            raise RuntimeError(
-                "未检测到 ANTHROPIC_API_KEY。请设置环境变量，或用 --offline 走规则兜底。")
-        return _offline(overall, settings.thresholds, title, period)
+            raise RuntimeError("未检测到 ANTHROPIC_API_KEY，且未允许离线兜底。")
+        return _offline(analysis, settings.thresholds, title, period)
 
-    try:
-        import anthropic
-    except ImportError as e:
-        raise RuntimeError("请先安装 anthropic： pip install anthropic") from e
-
-    client = anthropic.Anthropic(api_key=api_key)
+    import anthropic
+    client = anthropic.Anthropic()
+    facts = prompts.build_facts(analysis)
     user = prompts.USER_TEMPLATE.format(
         title=title, period=period,
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
-        facts=json.dumps(facts, ensure_ascii=False, indent=2),
-    )
+        facts=json.dumps(facts, ensure_ascii=False, indent=2))
     msg = client.messages.create(
-        model=settings.model,
-        max_tokens=settings.max_tokens,
-        temperature=settings.temperature,
-        system=prompts.SYSTEM,
-        messages=[{"role": "user", "content": user}],
-    )
-    text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        model=settings.model, max_tokens=settings.max_tokens,
+        temperature=settings.temperature, system=prompts.SYSTEM,
+        messages=[{"role": "user", "content": user}])
+    text = "".join(b.text for b in msg.content
+                   if getattr(b, "type", "") == "text")
     try:
-        data = _extract_json(text)
+        return _extract_json(text)
     except (json.JSONDecodeError, ValueError):
-        # 模型没给合法 JSON，退回兜底，避免整个流程失败
-        data = _offline(overall, settings.thresholds, title, period)
-    return data
+        return _offline(analysis, settings.thresholds, title, period)
 
 
 # --------------------------------------------------------------------------
-# 规则兜底：无 API key 也能端到端跑出一份（话术较模板化）
+# 规则兜底
 # --------------------------------------------------------------------------
 
-def _fmt_pct(v: float | None) -> str:
+def _pct(v) -> str:
     return f"{v:.2f}%" if v is not None else "—"
 
 
-def _country_verdict(c: CountryMetrics, th: Thresholds) -> tuple[str, str, str]:
-    """返回 (一句话定位, 分层标签, 建议动作)。"""
-    br = c.breakout_rate
-    over_invest = (c.published_share - c.spend_share) >= th.over_invest_gap
-
-    if br is not None and br >= th.breakout_high:
-        return ("最稳定的 KOL 主力投放池", "最值得放大",
-                "稳住量，提高单条素材质量，围绕主力脚本继续复刻。")
-    if over_invest:
-        return ("有量但效率一般，已现过量投入迹象", "明显投入过量",
-                "降频提质，精选供给，减少泛量与低质复制版本。")
-    if br is not None and br <= th.breakout_low:
-        return ("表面好看、底层偏弱", "需要控制投入",
-                "缩窄方向，只打老脚本、提高命中率，不适合扩量。")
-    return ("有量，承接中等", "可以做但要收着做",
-            "精选强素材小步放大，不泛铺。")
+def _label(c) -> str:
+    """红人·玩法 的可读标签，玩法为空时回退到素材名尾段。"""
+    play = c.play or (c.ad_name.split("_")[-1] if c.ad_name else "")
+    infl = c.influencer or ""
+    return f"{infl}·{play}".strip("·") or c.ad_name
 
 
-def _offline(overall: OverallMetrics, th: Thresholds,
-             title: str, period: str) -> dict:
-    top = overall.countries[:5]
-    top_str = "、".join(f"{c.name} {_fmt_pct(c.spend_share)}" for c in top)
+def _dedup(creatives):
+    """按 红人·玩法 合并（btta/日期版本视为同一素材），累计消耗、取最高 ROI7。"""
+    merged: dict[str, dict] = {}
+    for c in creatives:
+        key = _label(c)
+        m = merged.setdefault(key, {"spend": 0.0, "roi7": 0.0})
+        m["spend"] += c.spend
+        m["roi7"] = max(m["roi7"], (c.roi7 or 0.0))
+    return sorted(merged.items(), key=lambda kv: kv[1]["spend"], reverse=True)
 
-    strong_names = [c.name for c in overall.countries
-                    if c.breakout_rate and c.breakout_rate >= th.breakout_high]
-    weak_names = [c.name for c in overall.countries
-                  if c.breakout_rate is not None and c.breakout_rate <= th.breakout_low]
 
-    countries = []
-    for c in overall.countries:
-        one_liner, tag, action = _country_verdict(c, th)
-        conv = (
-            f"KOL投放消耗占比：{_fmt_pct(c.spend_share)}\n"
-            f"发布占比：{_fmt_pct(c.published_share)}\n"
-            f"跑出率：{_fmt_pct(c.breakout_rate)}\n"
-            f"平均 ROI7：{_fmt_pct(c.avg_roi7)}\n"
-            f"判断：{tag}。"
-        )
-        strong = "\n".join(f"强/有转化素材：{s.creative}" for s in c.strong[:5])
-        pot = "\n".join(f"潜力素材：{s.creative}" for s in c.potential[:4])
-        weak = "\n".join(f"弱素材：{s.creative}" for s in c.weak[:3])
-        creative_analysis = "\n".join(x for x in [strong, pot, weak] if x) \
-            or "本期该国暂无可识别的分档素材。"
-        countries.append({
-            "name": c.name,
-            "one_liner": one_liner,
-            "conversion": conv,
-            "creative_analysis": creative_analysis,
-            "todo": action,
-        })
+def _lang_block(l: LangMetrics) -> dict:
+    strong = "\n".join(
+        f"强/有转化：{name}（ROI7 {m['roi7']*100:.0f}%，消耗 {m['spend']:.0f}）"
+        for name, m in _dedup(l.strong)[:5])
+    pot = "\n".join(f"潜力：{name}" for name, _ in _dedup(l.potential)[:4])
+    weak = "\n".join(f"弱：{name}" for name, _ in _dedup(l.weak)[:3])
+    ca = "\n".join(x for x in [strong, pot, weak] if x) or "本期该语言暂无可识别分档素材。"
 
-    strategy = (
-        f"最值得继续放大：{('、'.join(strong_names)) or '（暂无明显强盘）'}——"
-        "有跑出、有主力脚本、ROI7 健康。\n"
-        f"当前最弱、需控制投入：{('、'.join(weak_names)) or '（暂无明显弱盘）'}——"
-        "跑出率偏低、头部素材依赖严重、可持续性不够。\n"
-        "其余国家可以做但要收着做，需精选、不适合泛铺。"
-    )
+    plays = "、".join(f"{p}" for p, _ in l.top_plays[:3])
+    if l.strong:
+        top_name = _dedup(l.strong)[0][0]
+        todo = (f"继续放大 {top_name}\n"
+                f"围绕主力玩法（{plays}）继续复刻，精选红人\n"
+                "减少 ROI7 偏低的弱版，控制泛量")
+        one = "主力语言池" if l.spend_share >= 15 else "有承接的次主力"
+    else:
+        todo = "小步验证，先跑老脚本提高命中率，不泛铺"
+        one = "样本/承接偏弱，需精选"
+
+    conv = (f"产出条数：{l.count}\n消耗占比：{_pct(l.spend_share)}\n"
+            f"跑出率：{_pct(l.breakout_rate)}\n平均 ROI7：{_pct(l.avg_roi7)}")
+    return {"name": l.name, "one_liner": one, "conversion": conv,
+            "creative_analysis": ca, "todo": todo}
+
+
+def _offline(a: Analysis, th: Thresholds, title: str, period: str) -> dict:
+    add = [g.name for g in a.gaps if g.verdict == "加量"]
+    cut = [g.name for g in a.gaps if g.verdict in ("削减", "减少")]
+    gap = a.coverage_gaps + [g.name for g in a.gaps
+                             if g.verdict == "覆盖缺口" and g.name not in
+                             [x.split("（")[0] for x in a.coverage_gaps]]
+    hi = [g.name for g in a.gaps if g.verdict == "高潜"]
+
+    pending = [g.name for g in a.gaps if g.verdict == "待补全"]
+    gap_summary = "；".join(x for x in [
+        f"值得加量：{('、'.join(add)) or '暂无'}",
+        f"应削减/降频：{('、'.join(cut)) or '暂无'}",
+        f"覆盖缺口(大盘有量但没产出)：{('、'.join(dict.fromkeys(gap))) or '暂无'}",
+        (f"高潜新线：{'、'.join(hi)}" if hi else ""),
+        (f"待 excel 补全消耗：{'、'.join(pending)}" if pending else ""),
+    ] if x)
+
+    m = a.market
+    top_c = sorted(m.ad_country_share.items(), key=lambda x: -x[1])[:5]
+    top_str = "、".join(f"{c} {p:.2f}%" for c, p in top_c) or "（无大盘截图数据）"
+    ad_overview = (
+        f"广告大盘（设计+KOL）总消耗约 {m.grand_total_spend or '—'}，"
+        f"分国家头部：{top_str}，明显集中在少数头部国家。\n"
+        f"KOL 占整体约 {_pct(m.kol_share_of_total)}，"
+        "仍是设计素材为主、KOL 为重要补充。")
 
     return {
-        "title": title,
-        "period": period,
-        "overall": {
-            "big_picture": (
-                f"本期 KOL 素材总消耗约 {overall.total_spend:.2f}。"
-                f"国家占比头部主要是：{top_str}。\n"
-                "结论：投放盘明显集中在少数头部国家。"
-            ),
-            "kol_position": (
-                "KOL 已经不是边缘补充项，而是整体盘里一个比较重要的消耗来源；"
-                "但整体仍是设计素材为主、KOL 素材为重要补充。"
-                "后续优化重点不是「有没有量」，而是能否更高效承接消耗、"
-                "供给是否投到了对的语言池/国家池。"
-            ),
-            "caveats": [
-                "广告消耗国家 ≠ 素材生产语言：部分西语 KOL 素材实际投在美国广告组，"
-                "消耗会记到「美国」。分析时要分清投放池承接能力与素材供给来源。"
-            ],
+        "title": title, "period": period,
+        "ad_section": {
+            "overview": ad_overview,
+            "caveat": "KOL 素材一律按语言看，英语(US) 与 西语(SP) 分开，不用「美国」国家口径；"
+                      "实际执行与产出都看语言。",
         },
-        "strategy_overview": strategy,
-        "countries": countries,
+        "gap_summary": gap_summary,
+        "langs": [_lang_block(l) for l in a.langs],
     }

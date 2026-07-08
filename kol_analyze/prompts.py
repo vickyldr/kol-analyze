@@ -1,79 +1,84 @@
-"""Claude 分析用的 prompt 与输出 schema。"""
+"""Claude 分析用 prompt 与 facts 构造。"""
 
 from __future__ import annotations
 
-SYSTEM = """你是一名资深的效果广告 / KOL 投放分析师。
-你的任务是：根据我给你的「已经聚合好的客观数字」，写出一份月度 KOL 广告复盘。
+SYSTEM = """你是一名资深效果广告 / KOL 投放分析师，为月度 KOL 复盘写分析。
+我会给你已经聚合好的客观数字（按【语言】看 KOL，英语/西语等分开，不用「美国」国家口径）。
 
-写作风格要求（非常重要，请严格模仿）：
-- 中文，口语但专业，像投手内部复盘，不要写成 PPT 套话。
-- 结论先行、敢下判断。多用这类措辞：「最值得继续放大」「可以做但要收着做」
-  「明显投入过量」「低效盘 / 应降频盘」「表面好看、底层偏弱」「高潜新线」。
-- 每个国家都要落到「留 / 放大 / 降频 / 优化什么」的具体动作，不要泛泛而谈。
-- 只能基于我给的数字与素材名做判断，不要编造不存在的素材或数据。
-- todo 用短句、可执行，例如「继续放大 口播功能录屏介绍」「减少 ROI7 低于 20% 的弱版」。
+写作要求（严格遵守）：
+- 中文，投手内部复盘口吻，结论先行、敢下判断，不写 PPT 套话。
+- 缺口分析的总结要【一句话】说清：哪些语言该加量、哪些该削减、哪些是大盘有量但没覆盖的机会。
+  不要每个语言写长段落，点到为止。
+- 每个语言的 todo 要具体到动作与素材/红人/玩法，例如
+  「继续放大 凝视哥·口播功能录屏介绍」「减少 ROI7 偏低的拉踩Gb 弱版」。
+- 只能基于我给的数字、红人、玩法、素材名判断，不要编造。
 
-只输出 JSON，不要任何解释性文字、不要 markdown 代码块围栏。"""
+只输出 JSON，不要任何解释文字，不要 markdown 代码围栏。"""
 
-# 期望的 JSON 结构（也用于校验/兜底）
 OUTPUT_SCHEMA_HINT = {
-    "title": "报告标题，如：26 RM月度KOL广告分析",
-    "period": "周期，如：5月",
-    "overall": {
-        "big_picture": "整体广告盘：总消耗、头部国家占比、集中度结论（1-2段）",
-        "kol_position": "KOL 在整体盘里的位置：是主力还是补充，后续优化要看什么（1段）",
-        "caveats": ["需要提醒的口径问题，如 广告消耗国家≠素材生产语言 …"],
+    "title": "报告标题",
+    "period": "周期，如 5月",
+    "ad_section": {
+        "overview": "一、广告部份：大盘（设计+KOL）分国家消耗集中在哪、设计师 vs KOL 占比、KOL 分国家消耗（1-2 段）",
+        "caveat": "口径提醒：KOL 按语言看，英语/西语分开",
     },
-    "strategy_overview": "跨国家的整体分层结论：哪些盘最值得放大 / 收着做 / 需要控制投入（分档列出国家并说明理由）",
-    "countries": [
+    "gap_summary": "二、产出 vs 消耗 缺口分析的【一句话总结】：加量=…；削减=…；覆盖缺口(大盘有量没产出)=…",
+    "langs": [
         {
-            "name": "国家名",
-            "one_liner": "一句话定位，如：最稳定的 KOL 主力投放池",
-            "conversion": "转化情况：把消耗占比/发布占比/跑出率读成一段判断",
-            "creative_analysis": "素材分析：点名有转化/潜力/弱素材，并给方向",
-            "todo": "todo：留/放大/降频/优化的可执行动作（可多条，用换行）",
+            "name": "语言名，如 土耳其语",
+            "one_liner": "一句话定位，如 最稳定的 KOL 主力语言池",
+            "conversion": "转化情况：把消耗占比/产出占比/跑出率读成判断",
+            "creative_analysis": "素材分析：点名强/潜力/弱素材（红人·玩法），给方向",
+            "todo": "todo：留/放大/降频/优化 的可执行动作（可多条，用换行）",
         }
     ],
 }
 
 
-def build_facts(overall) -> dict:
-    """把 metrics 转成喂给模型的紧凑 facts。"""
-    countries = []
-    for c in overall.countries:
-        countries.append({
-            "name": c.name,
-            "sheet_name": c.sheet_name,
-            "total_spend": round(c.total_spend, 2),
-            "spend_share_pct": round(c.spend_share, 2),
-            "published_share_pct": round(c.published_share, 2),
-            "breakout_rate_pct": (round(c.breakout_rate, 2)
-                                  if c.breakout_rate is not None else None),
-            "avg_roi7_pct": (round(c.avg_roi7, 2)
-                             if c.avg_roi7 is not None else None),
-            "strong_creatives": [
-                {"name": s.creative, "roi7": s.roi7,
-                 "spend_share_in_country": round(s.spend_share_in_country, 3)}
-                for s in c.strong[:8]
-            ],
-            "potential_creatives": [s.creative for s in c.potential[:8]],
-            "weak_creatives": [s.creative for s in c.weak[:8]],
+def build_facts(analysis) -> dict:
+    langs = []
+    for l in analysis.langs:
+        langs.append({
+            "语言": l.name, "代码": l.lang,
+            "产出条数": l.count, "消耗": round(l.spend, 2),
+            "消耗占比%": round(l.spend_share, 2),
+            "跑出率%": round(l.breakout_rate, 2) if l.breakout_rate is not None else None,
+            "平均ROI7%": round(l.avg_roi7, 2) if l.avg_roi7 is not None else None,
+            "top红人": [f"{n}×{c}" for n, c in l.top_influencers[:5]],
+            "top玩法": [f"{p}×{c}" for p, c in l.top_plays[:5]],
+            "强素材": [
+                {"素材": c.ad_name, "红人": c.influencer, "玩法": c.play,
+                 "ROI7%": round((c.roi7 or 0) * 100, 1), "消耗": round(c.spend, 1)}
+                for c in l.strong[:8]],
+            "潜力素材": [f"{c.influencer}·{c.play}" for c in l.potential[:6]],
+            "弱素材": [f"{c.influencer}·{c.play}" for c in l.weak[:5]],
         })
+    gaps = [{
+        "语言": g.name, "大盘消耗占比%": g.ad_market_share,
+        "KOL消耗占比%": round(g.kol_spend_share, 2) if g.kol_spend_share is not None else None,
+        "产出占比%": round(g.publish_share, 2) if g.publish_share is not None else None,
+        "跑出率%": round(g.breakout_rate, 2) if g.breakout_rate is not None else None,
+        "档位": g.verdict, "结论": g.one_line,
+    } for g in analysis.gaps]
+
+    m = analysis.market
     return {
-        "total_kol_spend": round(overall.total_spend, 2),
-        "grand_total_spend": overall.grand_total_spend,
-        "country_spend_share_from_screenshot": overall.country_spend_share or None,
-        "extra_notes": overall.notes or None,
-        "countries": countries,
+        "KOL总消耗": round(analysis.kol_total_spend, 2),
+        "大盘总消耗": m.grand_total_spend,
+        "KOL占整体%": m.kol_share_of_total,
+        "大盘分国家占比": m.ad_country_share or None,
+        "覆盖缺口(大盘有量但KOL没产出)": analysis.coverage_gaps or None,
+        "各语言指标": langs,
+        "缺口分析表": gaps,
     }
 
 
-USER_TEMPLATE = """下面是本期已聚合好的客观数据（JSON）。请据此产出复盘 JSON。
+USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产出复盘 JSON。
 
-报告标题请用：{title}
-报告周期请用：{period}
+标题用：{title}
+周期用：{period}
 
-严格按这个结构输出（键名保持一致）：
+严格按此结构输出（键名一致）：
 {schema}
 
 客观数据：

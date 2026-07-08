@@ -1,151 +1,222 @@
-"""读取输入数据：多 sheet 的 Excel，或一个文件夹里的多个 CSV。
+"""读取输入数据。
 
-每个 sheet / 文件 = 一个国家（区）。每行 = 一条素材。
-列名做容错归一化。
+支持两种输入：
+1) 【后台标准导出】一个 xlsx，含 `KOL素材` / `设计师素材` / `汇总统计` 等 sheet，
+   每行一条广告，国家/红人/玩法 从 ad_name 解析（推荐，你的真实格式）。
+2) 【简单格式】每个 sheet/CSV = 一个国家，列名如 素材名称/消耗/ROI7 …（兜底）。
 """
 
 from __future__ import annotations
 
-import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
+from . import country
 from .config import build_reverse_alias, normalize_key
 
-# 从 sheet 名 / 文件名里识别国家的一部分线索（可扩展）
-_COUNTRY_HINTS = {
-    "土耳其": "土耳其", "tr": "土耳其", "turkey": "土耳其",
-    "美国": "美国", "us": "美国", "usa": "美国", "西语": "美国", "sp": "美国",
-    "巴西": "巴西", "br": "巴西", "brazil": "巴西",
-    "台湾": "台湾", "tw": "台湾", "taiwan": "台湾",
-    "意大利": "意大利", "it": "意大利", "italy": "意大利",
-    "德国": "德国", "de": "德国", "germany": "德国",
-    "阿语": "阿语", "ar": "阿语", "arabic": "阿语",
-    "日本": "日本", "jp": "日本",
-}
+# 后台导出里认得的列名
+_C_ADNAME = ["ad_name", "素材名称", "广告名称"]
+_C_ROLE = ["设计师orkol", "设计师ORKOL", "role", "类型"]
+_C_SPEND = ["投放花费（爬虫）", "投放花费", "消耗", "花费", "spend"]
+_C_ROI7 = ["roi7（归因）", "roi7", "roi_7"]
+_C_ROI0 = ["roi0（归因）", "roi0"]
+_C_CONV = ["安装7日内试用&付费设备数", "安装当日试用&付费设备数", "转化设备数"]
+_C_CTR = ["点击率(全部)(爬虫)", "点击率", "ctr"]
+_C_FUNC = ["功能点", "玩法功能"]
 
 
 @dataclass
 class CreativeRow:
-    creative: str
-    spend: float = 0.0
-    published: float = 0.0
-    roi7: float | None = None
-    roi0: float | None = None
-    breakout: float | None = None
-    revenue: float | None = None
-    ctr: float | None = None
+    ad_name: str
+    lang: str | None = None
     influencer: str | None = None
-    raw: dict = field(default_factory=dict)
+    play: str | None = None
+    spend: float = 0.0
+    roi7: float | None = None       # 小数口径，0.52 = 52%
+    roi0: float | None = None
+    converted: bool = False         # 是否有转化
+    conv_devices: float = 0.0
+    ctr: float | None = None
 
 
 @dataclass
-class CountryData:
-    name: str            # 展示用国家名，例：土耳其
-    sheet_name: str      # 原始 sheet/文件名，用作“相关表”
+class LangGroup:
+    """按语言聚合的一组 KOL 素材。"""
+    lang: str
+    name: str                       # 中文语言名
     rows: list[CreativeRow] = field(default_factory=list)
 
 
-def _guess_country(label: str) -> str:
-    key = str(label).lower()
-    for hint, country in _COUNTRY_HINTS.items():
-        if hint in key:
-            return country
-    # 取 sheet 名里最像国家的中文段
-    m = re.search(r"[一-龥]{2,}", str(label))
-    return m.group(0) if m else str(label)
+@dataclass
+class Summary:
+    """汇总统计 sheet：整体/设计师/KOL 的条数、消耗、跑出率。"""
+    rows: dict[str, dict] = field(default_factory=dict)  # 分组 -> 指标
+
+
+@dataclass
+class Dataset:
+    langs: list[LangGroup]
+    summary: Summary | None = None
+    kol_total_spend: float = 0.0
+
+
+def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    norm = {normalize_key(c): c for c in df.columns}
+    for cand in candidates:
+        c = norm.get(normalize_key(cand))
+        if c:
+            return c
+    return None
 
 
 def _to_float(v) -> float | None:
     if v is None:
         return None
-    s = str(v).strip()
+    s = str(v).strip().replace(",", "").replace("%", "").replace("$", "")
     if s == "" or s.lower() in ("nan", "none", "-", "/"):
         return None
-    s = s.replace(",", "").replace("%", "").replace("￥", "").replace("$", "")
     try:
         return float(s)
     except ValueError:
         return None
 
 
-def _map_columns(df: pd.DataFrame) -> dict[str, str]:
-    """返回 标准字段 -> df 实际列名。"""
-    rev = build_reverse_alias()
-    mapping: dict[str, str] = {}
-    for col in df.columns:
-        std = rev.get(normalize_key(col))
-        if std and std not in mapping:
-            mapping[std] = col
-    return mapping
+# --------------------------------------------------------------------------
+# 后台标准导出
+# --------------------------------------------------------------------------
+
+def _is_backend_export(sheets: dict[str, pd.DataFrame]) -> bool:
+    for df in sheets.values():
+        if _find_col(df, _C_ADNAME) and _find_col(df, _C_ROLE):
+            return True
+    return False
 
 
-def _rows_from_df(df: pd.DataFrame) -> list[CreativeRow]:
-    df = df.dropna(how="all")
-    colmap = _map_columns(df)
-    if "creative" not in colmap:
-        # 没有识别到素材名列，退化为用第一列当素材名
-        colmap["creative"] = df.columns[0]
+def _load_backend(sheets: dict[str, pd.DataFrame]) -> Dataset:
+    # 选一个 KOL 明细 sheet：优先叫 KOL素材 的；否则从含 role 的 sheet 里筛 KOL
+    kol_df = None
+    for name, df in sheets.items():
+        if "kol" in name.lower() and _find_col(df, _C_ADNAME):
+            kol_df = df
+            break
+    if kol_df is None:
+        for df in sheets.values():
+            role = _find_col(df, _C_ROLE)
+            if role and _find_col(df, _C_ADNAME):
+                kol_df = df[df[role].astype(str).str.upper().str.contains("KOL")]
+                break
+    if kol_df is None or kol_df.empty:
+        raise ValueError("未在后台导出里找到 KOL 明细。")
 
-    rows: list[CreativeRow] = []
-    for _, r in df.iterrows():
-        name = str(r[colmap["creative"]]).strip()
+    c_name = _find_col(kol_df, _C_ADNAME)
+    c_spend = _find_col(kol_df, _C_SPEND)
+    c_roi7 = _find_col(kol_df, _C_ROI7)
+    c_roi0 = _find_col(kol_df, _C_ROI0)
+    c_conv = _find_col(kol_df, _C_CONV)
+    c_ctr = _find_col(kol_df, _C_CTR)
+
+    groups: dict[str, LangGroup] = {}
+    total_spend = 0.0
+    for _, r in kol_df.iterrows():
+        name = str(r[c_name]).strip()
         if not name or name.lower() == "nan":
             continue
-        rows.append(
-            CreativeRow(
-                creative=name,
-                spend=_to_float(r.get(colmap.get("spend"))) or 0.0,
-                published=_to_float(r.get(colmap.get("published"))) or 0.0,
-                roi7=_to_float(r.get(colmap.get("roi7"))),
-                roi0=_to_float(r.get(colmap.get("roi0"))),
-                breakout=_to_float(r.get(colmap.get("breakout"))),
-                revenue=_to_float(r.get(colmap.get("revenue"))),
-                ctr=_to_float(r.get(colmap.get("ctr"))),
-                influencer=(str(r.get(colmap.get("influencer"))).strip()
-                            if colmap.get("influencer") else None),
-                raw={c: r[c] for c in df.columns},
-            )
+        parts = country.parse_ad_name(name)
+        lang = parts.lang or "OTHER"
+        conv_dev = _to_float(r.get(c_conv)) or 0.0 if c_conv else 0.0
+        spend = _to_float(r.get(c_spend)) or 0.0 if c_spend else 0.0
+        total_spend += spend
+        row = CreativeRow(
+            ad_name=name,
+            lang=parts.lang,
+            influencer=parts.influencer,
+            play=country.clean_play(parts.play),
+            spend=spend,
+            roi7=_to_float(r.get(c_roi7)) if c_roi7 else None,
+            roi0=_to_float(r.get(c_roi0)) if c_roi0 else None,
+            converted=conv_dev > 0,
+            conv_devices=conv_dev,
+            ctr=_to_float(r.get(c_ctr)) if c_ctr else None,
         )
-    return rows
+        g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(parts.lang)))
+        g.rows.append(row)
+
+    summary = _load_summary(sheets)
+    langs = sorted(groups.values(), key=lambda g: sum(x.spend for x in g.rows),
+                   reverse=True)
+    return Dataset(langs=langs, summary=summary, kol_total_spend=total_spend)
 
 
-def load(path: str | Path) -> list[CountryData]:
-    """从 Excel(多 sheet) 或 目录(多 CSV/Excel) 载入按国家分组的数据。"""
+def _load_summary(sheets: dict[str, pd.DataFrame]) -> Summary | None:
+    for name, df in sheets.items():
+        if "汇总" in name or "summary" in name.lower():
+            grp_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+            out: dict[str, dict] = {}
+            for _, r in df.iterrows():
+                key = str(r[grp_col]).strip()
+                if key and key.lower() != "nan":
+                    out[key] = {c: r[c] for c in df.columns}
+            return Summary(rows=out)
+    return None
+
+
+# --------------------------------------------------------------------------
+# 简单格式（兜底）：每个 sheet/CSV = 一个国家/语言
+# --------------------------------------------------------------------------
+
+def _load_simple(sheets: dict[str, pd.DataFrame]) -> Dataset:
+    rev = build_reverse_alias()
+    groups: list[LangGroup] = []
+    total = 0.0
+    for label, df in sheets.items():
+        colmap = {}
+        for col in df.columns:
+            std = rev.get(normalize_key(col))
+            if std and std not in colmap:
+                colmap[std] = col
+        namecol = colmap.get("creative", df.columns[0])
+        # 从 sheet 名猜语言
+        parts = country.parse_ad_name(str(label)) if str(label).startswith("RM_") else None
+        lang = parts.lang if parts else None
+        g = LangGroup(lang=lang or label, name=country.lang_name(lang) if lang else str(label))
+        for _, r in df.dropna(how="all").iterrows():
+            nm = str(r[namecol]).strip()
+            if not nm or nm.lower() == "nan":
+                continue
+            p = country.parse_ad_name(nm)
+            spend = _to_float(r.get(colmap.get("spend"))) or 0.0
+            total += spend
+            roi = _to_float(r.get(colmap.get("roi7")))
+            if roi is not None and roi > 3:  # 简单格式常填百分数
+                roi = roi / 100.0
+            g.rows.append(CreativeRow(
+                ad_name=nm, lang=p.lang, influencer=p.influencer,
+                play=country.clean_play(p.play), spend=spend, roi7=roi,
+                converted=(roi or 0) > 0,
+            ))
+        if g.rows:
+            groups.append(g)
+    return Dataset(langs=groups, summary=None, kol_total_spend=total)
+
+
+def load(path: str | Path) -> Dataset:
     p = Path(path)
-    countries: list[CountryData] = []
-
+    sheets: dict[str, pd.DataFrame] = {}
     if p.is_dir():
-        files = sorted(
-            [f for f in p.iterdir()
-             if f.suffix.lower() in (".csv", ".xlsx", ".xls")]
-        )
-        for f in files:
+        for f in sorted(p.iterdir()):
             if f.suffix.lower() == ".csv":
-                df = pd.read_csv(f)
-                countries.append(_country_from(df, f.stem))
-            else:
-                for sheet, df in pd.read_excel(f, sheet_name=None).items():
-                    countries.append(_country_from(df, sheet))
+                sheets[f.stem] = pd.read_csv(f)
+            elif f.suffix.lower() in (".xlsx", ".xls"):
+                sheets.update(pd.read_excel(f, sheet_name=None))
     elif p.suffix.lower() in (".xlsx", ".xls"):
-        for sheet, df in pd.read_excel(p, sheet_name=None).items():
-            countries.append(_country_from(df, sheet))
+        sheets = pd.read_excel(p, sheet_name=None)
     elif p.suffix.lower() == ".csv":
-        df = pd.read_csv(p)
-        countries.append(_country_from(df, p.stem))
+        sheets[p.stem] = pd.read_csv(p)
     else:
         raise ValueError(f"不支持的输入类型: {p}")
 
-    # 过滤掉没有任何素材行的空表
-    return [c for c in countries if c.rows]
-
-
-def _country_from(df: pd.DataFrame, label: str) -> CountryData:
-    return CountryData(
-        name=_guess_country(label),
-        sheet_name=str(label),
-        rows=_rows_from_df(df),
-    )
+    if _is_backend_export(sheets):
+        return _load_backend(sheets)
+    return _load_simple(sheets)

@@ -1,131 +1,239 @@
-"""把原始素材行聚合成国家级指标，并给素材分档。
-
-这些是“客观数字”，交给 Claude 去写“主观判断/复盘话术”。
-规则兜底（offline）也用这里的分档结果。
+"""聚合：
+  A) KOL 按【语言】的指标 + 素材分档（来自 excel 明细）
+  B) 产出 vs 消耗 的【缺口分析】（结合大盘截图）—— 核心产出
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 
+from . import country
 from .config import Thresholds
-from .loader import CountryData, CreativeRow
+from .loader import Dataset, LangGroup
+from .market import MarketContext
 
 
 @dataclass
-class CreativeStat:
-    creative: str
-    spend: float
-    spend_share_in_country: float  # 占该国总消耗
-    roi7: float | None
-    breakout: float | None
+class CreativeAgg:
+    ad_name: str
     influencer: str | None
-    tier: str  # strong / potential / weak
+    play: str | None
+    spend: float
+    roi7: float | None       # 小数
+    conv_devices: float
+    tier: str                # strong / potential / weak
+    spend_share_in_lang: float
 
 
 @dataclass
-class CountryMetrics:
+class LangMetrics:
+    lang: str
     name: str
-    sheet_name: str
-    total_spend: float
-    published_count: float
-    breakout_rate: float | None  # 该国跑出率（若原始有跑出率则取均值，否则由强素材占比估算）
-    avg_roi7: float | None
-    # 跨国占比（需要全局才能算，先占位，聚合后回填）
-    spend_share: float = 0.0
-    published_share: float = 0.0
-    creatives: list[CreativeStat] = field(default_factory=list)
+    count: int                       # 去重后的素材条数
+    raw_count: int                   # 原始行数（含同素材多组）
+    spend: float
+    spend_share: float = 0.0         # 占 KOL 总消耗 %
+    breakout_rate: float | None = None  # 有转化条数 / 总条数 %
+    avg_roi7: float | None = None    # %
+    creatives: list[CreativeAgg] = field(default_factory=list)
+    top_influencers: list[tuple[str, int]] = field(default_factory=list)
+    top_plays: list[tuple[str, int]] = field(default_factory=list)
 
     @property
-    def strong(self) -> list[CreativeStat]:
+    def strong(self):
         return [c for c in self.creatives if c.tier == "strong"]
 
     @property
-    def potential(self) -> list[CreativeStat]:
+    def potential(self):
         return [c for c in self.creatives if c.tier == "potential"]
 
     @property
-    def weak(self) -> list[CreativeStat]:
+    def weak(self):
         return [c for c in self.creatives if c.tier == "weak"]
 
 
 @dataclass
-class OverallMetrics:
-    total_spend: float
-    countries: list[CountryMetrics]
-    # 大盘（设计+KOL）层面的数据，通常来自截图，可选
-    grand_total_spend: float | None = None
-    country_spend_share: dict[str, float] = field(default_factory=dict)
-    notes: list[str] = field(default_factory=list)
+class GapRow:
+    lang: str
+    name: str
+    ad_market_share: float | None    # 大盘（设计+KOL）该语言消耗占比 %
+    kol_spend_share: float | None    # KOL 消耗占比 %
+    publish_share: float | None      # 产出（发布）占比 %
+    breakout_rate: float | None
+    verdict: str                     # 加量 / 削减 / 覆盖缺口 / 减少 / 维持 / 高潜
+    one_line: str                    # 一句话结论
 
 
-def _tier_of(row: CreativeRow, country_total_spend: float,
-             th: Thresholds) -> str:
-    share = (row.spend / country_total_spend) if country_total_spend else 0.0
-    roi = row.roi7
-    if roi is not None:
-        if roi >= th.roi7_strong and share >= th.spend_share_meaningful:
-            return "strong"
-        if roi >= th.roi7_potential:
-            return "potential"
-        return "weak"
-    # 没有 ROI 时，用消耗占比粗判
-    if share >= th.spend_share_meaningful * 2:
+@dataclass
+class Analysis:
+    langs: list[LangMetrics]
+    gaps: list[GapRow]
+    kol_total_spend: float
+    market: MarketContext
+    coverage_gaps: list[str] = field(default_factory=list)  # 大盘有钱但没产出的语言/国家
+
+
+def _tier(roi7: float | None, converted: bool, share: float,
+          th: Thresholds) -> str:
+    r = roi7 if roi7 is not None else 0.0
+    if converted and r >= th.roi7_strong / 100 and share >= th.spend_share_meaningful:
         return "strong"
-    if share >= th.spend_share_meaningful:
+    if converted or r >= th.roi7_potential / 100:
         return "potential"
     return "weak"
 
 
-def _country_metrics(cd: CountryData, th: Thresholds) -> CountryMetrics:
-    total_spend = sum(r.spend for r in cd.rows)
-    published = sum(1 for r in cd.rows if r.published) or float(len(cd.rows))
+def _lang_metrics(g: LangGroup, th: Thresholds) -> LangMetrics:
+    # 去重：同 ad_name 合并（同素材可能投多个广告组）
+    agg: dict[str, dict] = defaultdict(
+        lambda: {"spend": 0.0, "roi7": None, "conv": 0.0,
+                 "influencer": None, "play": None})
+    conv_names, all_names = set(), set()
+    infl_counter: dict[str, int] = defaultdict(int)
+    play_counter: dict[str, int] = defaultdict(int)
+    roi_vals = []
 
-    roi_vals = [r.roi7 for r in cd.rows if r.roi7 is not None]
-    avg_roi7 = sum(roi_vals) / len(roi_vals) if roi_vals else None
+    for r in g.rows:
+        a = agg[r.ad_name]
+        a["spend"] += r.spend
+        if r.roi7 is not None:
+            a["roi7"] = max(a["roi7"] or 0.0, r.roi7)
+        a["conv"] += r.conv_devices
+        a["influencer"] = a["influencer"] or r.influencer
+        a["play"] = a["play"] or r.play
+        all_names.add(r.ad_name)
+        if r.converted:
+            conv_names.add(r.ad_name)
 
-    breakout_vals = [r.breakout for r in cd.rows if r.breakout is not None]
+    total_spend = sum(a["spend"] for a in agg.values())
+    for name, a in agg.items():
+        if a["influencer"]:
+            infl_counter[a["influencer"]] += 1
+        if a["play"]:
+            play_counter[a["play"]] += 1
+        if a["roi7"] is not None:
+            roi_vals.append(a["roi7"])
 
-    stats: list[CreativeStat] = []
-    for r in cd.rows:
-        tier = _tier_of(r, total_spend, th)
-        stats.append(CreativeStat(
-            creative=r.creative,
-            spend=r.spend,
-            spend_share_in_country=(r.spend / total_spend) if total_spend else 0.0,
-            roi7=r.roi7,
-            breakout=r.breakout,
-            influencer=r.influencer,
-            tier=tier,
+    creatives = []
+    for name, a in agg.items():
+        share = (a["spend"] / total_spend) if total_spend else 0.0
+        creatives.append(CreativeAgg(
+            ad_name=name, influencer=a["influencer"], play=a["play"],
+            spend=a["spend"], roi7=a["roi7"], conv_devices=a["conv"],
+            tier=_tier(a["roi7"], name in conv_names, share, th),
+            spend_share_in_lang=share,
         ))
-    stats.sort(key=lambda s: s.spend, reverse=True)
+    creatives.sort(key=lambda c: c.spend, reverse=True)
 
-    if breakout_vals:
-        breakout_rate = sum(breakout_vals) / len(breakout_vals)
-    else:
-        # 用强素材条数占比估一个跑出率
-        strong = sum(1 for s in stats if s.tier == "strong")
-        breakout_rate = (strong / len(stats) * 100) if stats else None
+    count = len(all_names)
+    breakout = (len(conv_names) / count * 100) if count else None
+    avg_roi7 = (sum(roi_vals) / len(roi_vals) * 100) if roi_vals else None
 
-    return CountryMetrics(
-        name=cd.name,
-        sheet_name=cd.sheet_name,
-        total_spend=total_spend,
-        published_count=published,
-        breakout_rate=breakout_rate,
-        avg_roi7=avg_roi7,
-        creatives=stats,
+    return LangMetrics(
+        lang=g.lang, name=g.name, count=count, raw_count=len(g.rows),
+        spend=total_spend, breakout_rate=breakout, avg_roi7=avg_roi7,
+        creatives=creatives,
+        top_influencers=sorted(infl_counter.items(), key=lambda x: -x[1])[:6],
+        top_plays=sorted(play_counter.items(), key=lambda x: -x[1])[:6],
     )
 
 
-def compute(countries: list[CountryData], th: Thresholds) -> OverallMetrics:
-    cms = [_country_metrics(c, th) for c in countries]
-    total_spend = sum(c.total_spend for c in cms)
-    total_pub = sum(c.published_count for c in cms) or 1.0
+def _market_lang_share(market: MarketContext) -> dict[str, float]:
+    """把大盘【国家】消耗占比聚合成【语言】占比。"""
+    out: dict[str, float] = defaultdict(float)
+    for c, pct in market.ad_country_share.items():
+        lang = country.country_lang(c)
+        if lang:
+            out[lang] += pct
+    return dict(out)
 
-    for c in cms:
-        c.spend_share = (c.total_spend / total_spend * 100) if total_spend else 0.0
-        c.published_share = (c.published_count / total_pub * 100)
 
-    cms.sort(key=lambda c: c.total_spend, reverse=True)
-    return OverallMetrics(total_spend=total_spend, countries=cms)
+def _verdict(ad_share, kol_share, pub_share, breakout, th, incomplete=False):
+    """给一句话结论 + 档位。incomplete=该语言 excel 消耗疑似未填充。"""
+    ad = ad_share or 0.0
+    kol = kol_share or 0.0
+    pub = pub_share or 0.0
+    br = breakout
+
+    # excel 消耗未填充但有产出：先别下「削减」，标记待补全
+    if incomplete and kol < 0.5 and pub >= 1.0:
+        return "待补全", "本期 excel 该语言消耗数据可能未填充，补全后再判断加量/削减。"
+
+    # 大盘有明显消耗，但 KOL 几乎没产出/没承接 -> 覆盖缺口
+    if ad >= 2.0 and pub < 1.0 and kol < 1.0:
+        return "覆盖缺口", "广告大盘有量、KOL 却没覆盖，值得补产出验证。"
+    # 产出远大于承接 -> 削减
+    if pub - kol >= th.over_invest_gap:
+        return "削减", "产出明显多于消耗承接，投入过量，应降频提质。"
+    # 承接远大于产出 且 跑得动 -> 加量
+    if kol - pub >= th.over_invest_gap * 0.6 and (br is None or br >= th.breakout_low):
+        return "加量", "承接强于产出、跑出不差，值得加量放大。"
+    # 有产出但几乎没消耗承接 -> 减少
+    if pub >= 3.0 and kol < 1.0:
+        return "减少", "有产出但广告几乎不消耗，建议减少或先优化。"
+    # 样本很小但跑出率高 -> 高潜
+    if br is not None and br >= th.breakout_high and pub < 3.0:
+        return "高潜", "样本少但信号好，作为高潜新线小步补量。"
+    return "维持", "产出与消耗大体匹配，维持并精选。"
+
+
+def compute(ds: Dataset, market: MarketContext, th: Thresholds) -> Analysis:
+    langs = [_lang_metrics(g, th) for g in ds.langs if g.rows]
+    total = sum(l.spend for l in langs) or 1.0
+    for l in langs:
+        l.spend_share = l.spend / total * 100
+    langs.sort(key=lambda l: l.spend, reverse=True)
+
+    # 产出占比：优先用截图发布占比，否则用 excel 条数占比
+    total_count = sum(l.count for l in langs) or 1
+    pub_share_by_lang = dict(market.kol_publish_share) if market.kol_publish_share else {}
+    if not pub_share_by_lang:
+        pub_share_by_lang = {l.lang: l.count / total_count * 100 for l in langs}
+
+    # KOL 消耗占比：优先 excel 语言口径
+    kol_share_by_lang = {l.lang: l.spend_share for l in langs}
+
+    ad_lang_share = _market_lang_share(market)
+
+    # 覆盖的语言集合
+    covered = {l.lang for l in langs if l.count > 0}
+
+    # excel 是否被单一语言主导（说明其余语言消耗可能未填充完整）
+    top_share = max((l.spend_share for l in langs), default=0.0)
+    excel_incomplete = top_share >= 85.0
+    if excel_incomplete:
+        dominant = max(langs, key=lambda l: l.spend_share).name
+        market.notes.append(
+            f"数据提醒：本期 excel 消耗高度集中在「{dominant}」（{top_share:.0f}%），"
+            "其余语言的 KOL 消耗口径可能尚未填充完整，缺口结论以「待补全」标注、暂缓下削减判断。")
+
+    gaps: list[GapRow] = []
+    seen = set()
+    for l in langs:
+        seen.add(l.lang)
+        ad_s = ad_lang_share.get(l.lang)
+        verdict, line = _verdict(ad_s, kol_share_by_lang.get(l.lang),
+                                 pub_share_by_lang.get(l.lang), l.breakout_rate, th,
+                                 incomplete=excel_incomplete and l.spend_share < 85.0)
+        gaps.append(GapRow(
+            lang=l.lang, name=l.name, ad_market_share=ad_s,
+            kol_spend_share=kol_share_by_lang.get(l.lang),
+            publish_share=pub_share_by_lang.get(l.lang),
+            breakout_rate=l.breakout_rate, verdict=verdict, one_line=line,
+        ))
+
+    # 大盘有量、但 KOL 完全没覆盖的语言（纯缺口）
+    coverage_gaps = []
+    for lang, share in sorted(ad_lang_share.items(), key=lambda x: -x[1]):
+        if share >= 2.0 and lang not in covered:
+            gaps.append(GapRow(
+                lang=lang, name=country.lang_name(lang), ad_market_share=share,
+                kol_spend_share=0.0, publish_share=0.0, breakout_rate=None,
+                verdict="覆盖缺口",
+                one_line="广告大盘有量、KOL 完全没产出，是明确的补产出机会。",
+            ))
+            coverage_gaps.append(f"{country.lang_name(lang)}（大盘 {share:.1f}%）")
+
+    return Analysis(langs=langs, gaps=gaps, kol_total_spend=sum(l.spend for l in langs),
+                    market=market, coverage_gaps=coverage_gaps)

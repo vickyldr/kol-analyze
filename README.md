@@ -1,30 +1,34 @@
 # KOL 月度广告复盘 · 自动分析工具
 
-丢入按国家整理的素材数据（Excel / CSV）＋（可选）大盘截图，
-自动产出一份结构对齐团队现有模板的**月度 KOL 广告复盘文档（.docx）**。
+丢入后台导出的 KOL 素材数据（xlsx）＋ 4 张大盘截图，
+自动产出一份月度 KOL 广告复盘文档（.docx）——结构对齐团队现有模板，
+并自动做出你最关心的**「产出 vs 消耗」缺口判断**（该加量 / 该削减 / 大盘有量但没覆盖）。
 
-分析话术由 Claude 自动生成（结论先行、敢下判断，模仿投手复盘口吻）；
-未配置 API key 时，会用内置规则兜底也能端到端跑出一份。
+分析话术由 Claude 自动生成（结论先行、投手口吻）；未配 API key 时用内置规则兜底也能端到端跑出一份。
 
 ---
 
-## 它做什么
+## 它怎么工作
 
 ```
-国别素材数据(Excel/CSV) ──┐
-                          ├─► 聚合&素材分档 ─► Claude 写分析 ─► 复盘 .docx
-大盘截图(可选, 图片)   ──┘        (客观数字)      (主观判断)
+后台导出 xlsx (KOL素材明细) ──┐
+                              ├─► 按【语言】聚合 + 素材分档 ─► Claude 写分析 ─► 复盘 .docx
+4 张大盘截图 (占比口径)     ──┘        缺口分析(产出vs消耗)
 ```
 
-产出的文档结构：
+产出文档三部分：
 
-- **一、整体**
-  - 1）整体广告盘（总消耗、头部国家占比、集中度结论）
-  - 2）KOL 在整体盘里的位置
-  - 口径提醒（如：广告消耗国家 ≠ 素材生产语言）
-  - 跨国家整体分层（最值得放大 / 收着做 / 需控制投入）
-- **二、KOL素材分国家分析**（表格）
-  - 国家区 ｜ 相关表 ｜ 转化情况 ｜ 素材分析 ｜ 整体分析 ｜ todo
+- **一、广告部份**：大盘（设计+KOL）分国家消耗集中在哪、设计师 vs KOL 占比、KOL 分国家消耗。
+- **二、产出 vs 消耗 · 缺口分析**（核心）：一句话总结 + 缺口表。每个语言给出
+  `大盘消耗占比 / KOL消耗占比 / 产出占比 / 跑出率 / 档位 / 一句话结论`，档位包括：
+  - **加量**：承接强于产出、跑得动 → 值得放大产出
+  - **削减 / 减少**：产出多于承接 → 降频提质
+  - **覆盖缺口**：广告大盘有量、KOL 却没产出 → 明确的补产出机会（如沙特/泰国/日本）
+  - **高潜**：样本少但信号好 → 小步补量
+- **三、KOL 分语言素材分析**：每个语言的转化情况、强/潜力/弱素材（红人·玩法）、todo。
+
+> 口径：KOL 素材一律**按语言看**，英语(US) 与 西语(SP) 分开，不用「美国」国家口径——
+> 因为实际执行与产出都看语言（这点从 ad_name `RM_US_` / `RM_SP_` 精确区分）。
 
 ---
 
@@ -32,84 +36,86 @@
 
 ```bash
 pip install -r requirements.txt
-```
-
-想让 Claude 自动写分析（推荐），配置 API key：
-
-```bash
-export ANTHROPIC_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-...   # 让 Claude 写分析 & 读截图（推荐）
 ```
 
 ## 用法
 
 ```bash
-# 最简：丢一个多 sheet 的 Excel（每个 sheet = 一个国家）
-python analyze.py 你的数据.xlsx --title "26 RM月度KOL广告分析" --period "5月"
+# 丢后台导出 xlsx + 4 张大盘截图
+python analyze.py 你的后台导出.xlsx \
+    --shot 大盘分国家.png 设计vsKOL.png KOL分国家.png 发布分语言.png \
+    --title "26 RM月度KOL广告分析" --period "5月"
 
-# 丢一个装着多国 CSV/Excel 的文件夹
-python analyze.py 数据文件夹/ -o 5月复盘.docx
+# 大盘数据用手填 JSON（无需读图，可离线测试）
+python analyze.py 你的后台导出.xlsx --market templates/market_sample.json --offline
 
-# 附带大盘截图（自动读图回填总消耗/各国占比）
-python analyze.py 数据.xlsx --shot 大盘1.png 大盘2.png
-
-# 不调用 Claude，仅用规则兜底（离线/无 key 时）
-python analyze.py 数据.xlsx --offline
+# 只有 excel，不给大盘（仍出 KOL 分语言分析，缺口表大盘列为空）
+python analyze.py 你的后台导出.xlsx --offline
 ```
 
-## 输入格式
+## 输入 1：后台导出 xlsx
 
-每个国家一个 sheet（或一个 CSV 文件），sheet/文件名里带上国家（中文/英文/缩写都能识别，
-如 `土耳其`、`TR`、`turkey`）。每行是一条素材，列名容错（见下），常用列：
+直接用你后台导出的那份即可（含 `KOL素材` / `设计师素材` / `汇总统计` sheet）。
+工具从 `KOL素材` sheet 读，关键列（列名容错，可在 `config.py` 扩展别名）：
 
-| 素材名称 | 红人 | 消耗 | 发布 | ROI7 | 跑出率 | 预估净收入 | 点击率 |
-|---|---|---|---|---|---|---|---|
-| RM_TR_KOL_口播功能录屏介绍 | 小白牙 | 1420 | 1 | 42 | 18 | 980 | 3.1 |
+| 列 | 说明 |
+|---|---|
+| `ad_name` | 素材名，形如 `RM_TR_KOL_凝视哥_20260212_图生音乐混合功能_口播功能录屏介绍`。**语言/红人/玩法都从这里解析**（前面带哈希/文案前缀也能识别）。 |
+| `设计师orKOL` | 用来筛出 KOL 行 |
+| `投放花费（爬虫）` | 消耗 |
+| `ROI7（归因）` | ROI7（小数口径，0.52=52%） |
+| `安装7日内试用&付费设备数` | >0 视为「有转化」，用于算跑出率 |
 
-- 只有 **素材名称 + 消耗** 是基本必需；其余列有则用、没有则跳过。
-- 列名不必完全一致，工具会做别名匹配（`花费`→消耗、`cost`→消耗、`roi_7`→ROI7…）。
-  别名表在 `kol_analyze/config.py` 里可扩展。
-- ROI7 / 跑出率按百分比数字填（`42` 表示 42%）。
+看一眼期望格式：`python templates/make_sample.py` 生成 `templates/sample_input.xlsx`（合成数据）。
 
-看一眼期望格式，直接生成示例：
+## 输入 2：4 张大盘截图
 
-```bash
-python templates/make_sample.py      # 生成 templates/sample_input.xlsx
-```
+这些占比在后台是截图、不在 excel 里。用 `--shot` 传入，Claude 视觉会读成结构化数字：
 
-`examples/sample_output.docx` 就是用该示例跑出来的复盘文档。
+1. **广告大盘分国家消耗**（设计+KOL，含 Total）→ 用于「覆盖缺口」
+2. **设计师 vs KOL 占比**（其中 KOL 一行是 KOL 占整体）
+3. **KOL 素材分国家消耗**
+4. **发布分语言**（饼图，US/TR/SP/BR/IT… 条数与占比）→ 产出占比
 
-## 大盘截图（发布/投入产出）
+无 API key 或想离线跑时，可改用 `--market market.json` 手填这些数字，
+格式见 `templates/market_sample.json`。
 
-「发布占比 / 投入产出」等大盘数据通常在后台截图里、不在数据文件里。
-用 `--shot` 传入截图，工具会用 Claude 视觉能力读成结构化数字
-（总消耗、各国占比等）回填到「整体」部分。需要 `ANTHROPIC_API_KEY`。
+## 关于「按语言」与数据完整性
+
+- KOL 的消耗/产出/素材一律按**语言**归集（`RM_<语言>_` 解析），英语/西语天然分开。
+- 大盘截图是按**国家**的，仅用于「覆盖缺口」——工具用 `country.py` 里的
+  国家→语言映射把大盘消耗折算到语言，判断某语言 KOL 是否欠产出。
+- 若某期 excel 只填了部分语言（如只有土耳其），工具会检测到并把其余语言标为
+  **待补全**，不会误判成「削减」。
 
 ## 可调项（`kol_analyze/config.py`）
 
-- `Thresholds`：素材分档（强/潜力/弱）与国家分层（放大/过量/降频）的阈值口径。
-- `Settings.model`：使用的模型（默认 `claude-opus-4-8`）。
-- 列别名：`COLUMN_ALIASES`。
+- `Thresholds`：素材分档 & 缺口档位（加量/削减/覆盖缺口）的阈值口径。
+- `Settings.model`：模型（默认 `claude-opus-4-8`）。
+- 列别名 `COLUMN_ALIASES`、国家→语言 `country.COUNTRY_TO_LANG`、语言名 `country.LANG_NAME`。
 
 ## 目录结构
 
 ```
 analyze.py               # CLI 入口
 kol_analyze/
-  config.py              # 列别名、阈值、模型设置
-  loader.py              # 读 Excel/CSV，按国家分组、列名归一化
-  metrics.py             # 聚合国家级指标 + 素材分档
-  vision.py              # 读大盘截图（Claude 视觉）
-  prompts.py             # 分析 prompt 与输出 schema
-  analyzer.py            # 调 Claude 写分析（含规则兜底）
-  docx_writer.py         # 渲染成 .docx
+  config.py              # 列别名、阈值、模型
+  country.py             # 语言/国家归一化 + ad_name 解析(语言/红人/玩法)
+  loader.py              # 读后台导出 xlsx（含简单格式兜底）
+  market.py              # 大盘上下文（截图/JSON）
+  metrics.py             # 按语言聚合 + 素材分档 + 缺口分析
+  vision.py              # 读 4 张大盘截图（Claude 视觉）
+  prompts.py / analyzer.py  # Claude 写分析（含规则兜底）
+  docx_writer.py         # 渲染三段式 .docx
 templates/
-  make_sample.py         # 生成示例输入
+  make_sample.py         # 生成后台格式示例输入（合成）
   sample_input.xlsx      # 示例输入
+  market_sample.json     # 示例大盘数据
 examples/
   sample_output.docx     # 示例输出
 ```
 
 ## 说明
 
-- 工具只基于你给的数字与素材名做判断，不会编造不存在的素材/数据。
-- 生成结果建议结合业务判断复核后再使用。
+工具只基于你给的数字、红人、玩法、素材名判断，不会编造。结果建议结合业务复核后使用。

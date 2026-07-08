@@ -2,37 +2,42 @@
 """KOL 月度广告复盘 · 自动分析工具
 
 用法：
-    python analyze.py 数据.xlsx                       # 最简：丢一个多 sheet 的 Excel
-    python analyze.py 数据文件夹/ -o 5月复盘.docx      # 丢一个装着多国 CSV/Excel 的文件夹
-    python analyze.py 数据.xlsx --shot 大盘1.png 大盘2.png   # 附带大盘截图
-    python analyze.py 数据.xlsx --title "26 RM月度KOL广告分析" --period "5月"
-    python analyze.py 数据.xlsx --offline             # 不调用 Claude，用规则兜底
+    # 丢后台导出的 xlsx（含 KOL素材/设计师素材/汇总统计），配大盘截图
+    python analyze.py 数据.xlsx --shot 大盘1.png 设计vsKOL.png KOL分国家.png 发布分语言.png \\
+        --title "26 RM月度KOL广告分析" --period "5月"
 
-需要 Claude 自动写分析时，先设置：
-    export ANTHROPIC_API_KEY=sk-...
+    # 大盘数据用手填 JSON（无需读图，可离线测试）
+    python analyze.py 数据.xlsx --market templates/market_sample.json --offline
+
+    # 只有 excel，不给大盘（仍能出 KOL 分语言分析，缺口分析里大盘列为空）
+    python analyze.py 数据.xlsx --offline
+
+需要 Claude 写分析/读截图时：export ANTHROPIC_API_KEY=sk-...
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-from kol_analyze import analyzer, docx_writer, loader, metrics, vision
+from kol_analyze import analyzer, docx_writer, loader, market, metrics, vision
 from kol_analyze.config import Settings
+from kol_analyze.market import MarketContext
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description="丢入按国家整理的素材数据，自动产出月度 KOL 广告复盘 docx。")
-    ap.add_argument("input", help="输入：多 sheet 的 Excel / CSV / 装着多国文件的文件夹")
+        description="丢入 KOL 素材数据（+大盘截图），自动产出月度复盘 docx。")
+    ap.add_argument("input", help="后台导出 xlsx / CSV / 目录")
     ap.add_argument("-o", "--output", default=None, help="输出 docx 路径")
     ap.add_argument("--title", default="月度 KOL 广告复盘", help="报告标题")
-    ap.add_argument("--period", default="", help="报告周期，如 5月")
-    ap.add_argument("--shot", nargs="*", default=[], help="大盘截图（可多张）")
-    ap.add_argument("--model", default=None, help="覆盖使用的模型")
-    ap.add_argument("--offline", action="store_true",
-                    help="不调用 Claude，仅用规则兜底生成")
+    ap.add_argument("--period", default="", help="周期，如 5月")
+    ap.add_argument("--shot", nargs="*", default=[], help="大盘截图（1~4 张）")
+    ap.add_argument("--market", default=None, help="大盘数据 JSON（替代截图）")
+    ap.add_argument("--model", default=None, help="覆盖模型")
+    ap.add_argument("--offline", action="store_true", help="不调用 Claude，规则兜底")
     args = ap.parse_args(argv)
 
     inp = Path(args.input)
@@ -42,32 +47,39 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings()
     if args.model:
-        settings.model = args.model
-        settings.vision_model = args.model
+        settings.model = settings.vision_model = args.model
     if args.offline:
-        import os
         os.environ.pop("ANTHROPIC_API_KEY", None)
 
     print(f"→ 读取数据：{inp}")
-    countries = loader.load(inp)
-    if not countries:
-        print("✗ 没有从输入里读到任何素材行，请检查列名/格式。", file=sys.stderr)
+    ds = loader.load(inp)
+    if not ds.langs:
+        print("✗ 没读到任何 KOL 素材行，请检查格式。", file=sys.stderr)
         return 1
-    print(f"  识别到 {len(countries)} 个国家/区：{'、'.join(c.name for c in countries)}")
+    print(f"  识别到 {len(ds.langs)} 个语言：" +
+          "、".join(f"{l.name}({len(l.rows)})" for l in ds.langs))
 
-    overall = metrics.compute(countries, settings.thresholds)
-
-    if args.shot:
+    # 大盘上下文
+    mkt = MarketContext()
+    if args.market:
+        mkt = market.load_json(args.market)
+        print(f"→ 载入大盘数据：{args.market}")
+    elif args.shot:
         print(f"→ 读取 {len(args.shot)} 张大盘截图 …")
-        overall = vision.enrich_from_screenshots(overall, args.shot, settings)
+        mkt = vision.read_screenshots(args.shot, settings)
+    if ds.kol_total_spend and not mkt.kol_total_spend:
+        mkt.kol_total_spend = ds.kol_total_spend
 
-    import os
+    analysis = metrics.compute(ds, mkt, settings.thresholds)
+    for n in mkt.notes:
+        print("  " + n)
+
     mode = "Claude" if os.environ.get("ANTHROPIC_API_KEY") else "规则兜底(offline)"
     print(f"→ 生成分析（{mode}，model={settings.model}）…")
-    data = analyzer.analyze(overall, settings, args.title, args.period)
+    data = analyzer.analyze(analysis, settings, args.title, args.period)
 
     out = args.output or f"{args.title}_{args.period or '复盘'}.docx"
-    out = docx_writer.render(data, overall, out)
+    out = docx_writer.render(data, analysis, out)
     print(f"✓ 已生成复盘文档：{out}")
     return 0
 
