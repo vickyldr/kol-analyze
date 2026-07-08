@@ -94,7 +94,7 @@ def _is_backend_export(sheets: dict[str, pd.DataFrame]) -> bool:
     return False
 
 
-def _load_backend(sheets: dict[str, pd.DataFrame]) -> Dataset:
+def _load_backend(sheets: dict[str, pd.DataFrame], _mem=None) -> Dataset:
     # 选一个 KOL 明细 sheet：优先叫 KOL素材 的；否则从含 role 的 sheet 里筛 KOL
     kol_df = None
     for name, df in sheets.items():
@@ -124,14 +124,17 @@ def _load_backend(sheets: dict[str, pd.DataFrame]) -> Dataset:
         if not name or name.lower() == "nan":
             continue
         parts = country.parse_ad_name(name)
-        lang = parts.lang or "OTHER"
+        # 记忆库：语言纠正 + 红人别名
+        forced_lang = _mem.override_lang(name, parts.play) if _mem else None
+        influencer = _mem.alias_influencer(parts.influencer) if _mem else parts.influencer
+        lang = forced_lang or parts.lang or "OTHER"
         conv_dev = _to_float(r.get(c_conv)) or 0.0 if c_conv else 0.0
         spend = _to_float(r.get(c_spend)) or 0.0 if c_spend else 0.0
         total_spend += spend
         row = CreativeRow(
             ad_name=name,
-            lang=parts.lang,
-            influencer=parts.influencer,
+            lang=forced_lang or parts.lang,
+            influencer=influencer,
             play=country.clean_play(parts.play),
             spend=spend,
             roi7=_to_float(r.get(c_roi7)) if c_roi7 else None,
@@ -140,7 +143,7 @@ def _load_backend(sheets: dict[str, pd.DataFrame]) -> Dataset:
             conv_devices=conv_dev,
             ctr=_to_float(r.get(c_ctr)) if c_ctr else None,
         )
-        g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(parts.lang)))
+        g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(lang)))
         g.rows.append(row)
 
     summary = _load_summary(sheets)
@@ -201,7 +204,7 @@ def _load_simple(sheets: dict[str, pd.DataFrame]) -> Dataset:
     return Dataset(langs=groups, summary=None, kol_total_spend=total)
 
 
-def load(path: str | Path) -> Dataset:
+def load(path: str | Path, mem=None) -> Dataset:
     p = Path(path)
     sheets: dict[str, pd.DataFrame] = {}
     if p.is_dir():
@@ -218,5 +221,5 @@ def load(path: str | Path) -> Dataset:
         raise ValueError(f"不支持的输入类型: {p}")
 
     if _is_backend_export(sheets):
-        return _load_backend(sheets)
+        return _load_backend(sheets, mem)
     return _load_simple(sheets)

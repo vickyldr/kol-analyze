@@ -22,7 +22,8 @@ import os
 import sys
 from pathlib import Path
 
-from kol_analyze import analyzer, docx_writer, loader, market, metrics, scripts, vision
+from kol_analyze import (analyzer, docx_writer, loader, market, memory,
+                         metrics, scripts, vision)
 from kol_analyze.config import Settings
 from kol_analyze.market import MarketContext
 
@@ -36,6 +37,7 @@ def main(argv=None) -> int:
     ap.add_argument("--period", default="", help="周期，如 5月")
     ap.add_argument("--shot", nargs="*", default=[], help="大盘截图（1~4 张）")
     ap.add_argument("--market", default=None, help="大盘数据 JSON（替代截图）")
+    ap.add_argument("--memory", default=None, help="命名修正记忆库 JSON")
     ap.add_argument("--model", default=None, help="覆盖模型")
     ap.add_argument("--offline", action="store_true", help="不调用 Claude，规则兜底")
     args = ap.parse_args(argv)
@@ -51,8 +53,13 @@ def main(argv=None) -> int:
     if args.offline:
         os.environ.pop("ANTHROPIC_API_KEY", None)
 
+    mem = memory.load(args.memory)
+    if args.memory:
+        print(f"→ 载入记忆库：{args.memory}（{len(mem.play_overrides)} 精确修正、"
+              f"{len(mem.keyword_rules)} 关键词规则）")
+
     print(f"→ 读取数据：{inp}")
-    ds = loader.load(inp)
+    ds = loader.load(inp, mem)
     if not ds.langs:
         print("✗ 没读到任何 KOL 素材行，请检查格式。", file=sys.stderr)
         return 1
@@ -75,7 +82,7 @@ def main(argv=None) -> int:
     top_share = max((l.spend_share for l in analysis.langs), default=0.0)
     incomplete = ({l.lang for l in analysis.langs if l.spend_share < 5.0}
                   if top_share >= 85.0 else set())
-    script_analysis = scripts.analyze(analysis.langs, settings.thresholds, incomplete)
+    script_analysis = scripts.analyze(analysis.langs, settings.thresholds, incomplete, mem)
     for n in mkt.notes:
         print("  " + n)
     print(f"  素材维度：{len(script_analysis.scripts)} 类脚本、"

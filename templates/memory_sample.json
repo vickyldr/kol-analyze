@@ -1,0 +1,22 @@
+{
+  "play_overrides": {
+    "图生音乐混合功能_口播功能录屏介绍": {
+      "set_script": ["自制AI热歌"],
+      "add_script": ["功能录屏介绍"],
+      "set_format": ["口播"],
+      "add_format": [],
+      "note": "实习生命名为『口播功能录屏介绍』，实际形式=口播、脚本本质=AI热歌口述，故同时归入 自制AI热歌"
+    }
+  },
+  "keyword_rules": [
+    {
+      "match": "口播功能录屏",
+      "add_script": ["自制AI热歌"],
+      "add_format": ["口播"],
+      "set_script": [],
+      "note": "凡命中『口播功能录屏』的素材，都补打 自制AI热歌 + 口播 标签"
+    }
+  ],
+  "influencer_alias": {},
+  "lang_overrides": {}
+}

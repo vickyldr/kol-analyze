@@ -12,6 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .config import FORMAT_TAGS, SCRIPT_TAGS, TECH_TAGS, Thresholds
+from .memory import Memory
 from .metrics import CreativeAgg, LangMetrics
 
 
@@ -22,17 +23,29 @@ def _match_tags(text: str | None, table: dict[str, list[str]]) -> list[str]:
     return [tag for tag, kws in table.items() if any(k.lower() in low for k in kws)]
 
 
-def script_theme(c: CreativeAgg) -> str:
-    """给素材一个主题标签（找不到已知主题就用技法兜底）。"""
+def _base_scripts(c: CreativeAgg) -> list[str]:
     themes = _match_tags(c.play, SCRIPT_TAGS)
     if themes:
-        return themes[0]
+        return themes
     tech = _match_tags(c.play, TECH_TAGS)
-    return tech[0] if tech else (c.play or "其他").split("_")[0]
+    return tech[:1] if tech else [(c.play or "其他").split("_")[0]]
 
 
-def format_tags(c: CreativeAgg) -> list[str]:
-    return _match_tags(c.play, FORMAT_TAGS)
+def script_themes(c: CreativeAgg, mem: Memory | None = None) -> list[str]:
+    """给素材的脚本主题（可多个）；记忆库修正会追加/替换。"""
+    base = _base_scripts(c)
+    if mem is None:
+        return base
+    scripts, _ = mem.apply_tags(c.ad_name, c.play, base, _match_tags(c.play, FORMAT_TAGS))
+    return scripts
+
+
+def format_tags(c: CreativeAgg, mem: Memory | None = None) -> list[str]:
+    base = _match_tags(c.play, FORMAT_TAGS)
+    if mem is None:
+        return base
+    _, formats = mem.apply_tags(c.ad_name, c.play, _base_scripts(c), base)
+    return formats
 
 
 @dataclass
@@ -92,25 +105,26 @@ class ScriptAnalysis:
 
 
 def analyze(langs: list[LangMetrics], th: Thresholds,
-            incomplete_langs: set | None = None) -> ScriptAnalysis:
+            incomplete_langs: set | None = None,
+            mem: Memory | None = None) -> ScriptAnalysis:
     incomplete_langs = incomplete_langs or set()
     active = [l for l in langs if l.count >= 3]          # 有一定产出的语言
     active_names = {l.lang: l.name for l in active}
 
-    # ---- 脚本(主题) × 语言 ----
+    # ---- 脚本(主题) × 语言（一条素材可归入多个主题：记忆库修正） ----
     script_map: dict[str, ScriptRow] = {}
     for l in langs:
         for c in l.creatives:
-            theme = script_theme(c)
-            row = script_map.setdefault(theme, ScriptRow(theme=theme))
-            cell = row.cells.setdefault(l.lang, Cell(lang=l.lang, name=l.name))
-            cell.count += 1
-            cell.spend += c.spend
-            if c.roi7 is not None:
-                cell.best_roi7 = max(cell.best_roi7 or 0.0, c.roi7)
-            if c.conv_devices > 0:
-                cell.converted += 1
-            row.total_spend += c.spend
+            for theme in script_themes(c, mem):
+                row = script_map.setdefault(theme, ScriptRow(theme=theme))
+                cell = row.cells.setdefault(l.lang, Cell(lang=l.lang, name=l.name))
+                cell.count += 1
+                cell.spend += c.spend
+                if c.roi7 is not None:
+                    cell.best_roi7 = max(cell.best_roi7 or 0.0, c.roi7)
+                if c.conv_devices > 0:
+                    cell.converted += 1
+                row.total_spend += c.spend
 
     for row in script_map.values():
         row.strong_langs = [c.name for c in row.cells.values() if c.is_strong]
@@ -136,7 +150,7 @@ def analyze(langs: list[LangMetrics], th: Thresholds,
     lang_formats: dict[str, set] = defaultdict(set)
     for l in langs:
         for c in l.creatives:
-            for f in format_tags(c):
+            for f in format_tags(c, mem):
                 fmt_map[f][l.name] += 1
                 lang_formats[l.lang].add(f)
 
@@ -156,10 +170,12 @@ def analyze(langs: list[LangMetrics], th: Thresholds,
     # ---- 各语言脚本策略 ----
     strategies: list[LangStrategy] = []
     for l in active:
-        themes = {script_theme(c) for c in l.creatives if c.spend > 0 or c.conv_devices > 0}
-        diversity = len(themes) or len({script_theme(c) for c in l.creatives})
+        themes = {t for c in l.creatives if c.spend > 0 or c.conv_devices > 0
+                  for t in script_themes(c, mem)}
+        diversity = len(themes) or len({t for c in l.creatives
+                                        for t in script_themes(c, mem)})
         br = l.breakout_rate
-        strong = [script_theme(c) for c in l.strong][:3]
+        strong = [t for c in l.strong for t in script_themes(c, mem)][:3]
         has_potential = bool(l.strong or l.potential)
 
         if l.lang in incomplete_langs:
