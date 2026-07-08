@@ -39,11 +39,30 @@
 
 ---
 
-## 安装
+## Web 版（推荐给 2-3 人用）
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-...   # 让 Claude 写分析 & 读截图（推荐）
+python -m kol_analyze.web          # 浏览器打开 http://127.0.0.1:8000
+```
+
+网页里完成整个流程：
+
+1. **上传**后台导出 xlsx + 大盘截图 → 一键分析。
+2. **审阅并修正命名**：实习生命名不准的地方，点素材行「修正」，给它加/改
+   脚本、形式标签（可多个），选「凡含此玩法」或「仅这条」，**存进记忆库**，
+   下月自动套用。右侧实时显示记忆库与缺口/迁移要点。
+3. **补缺**：某国 excel 没传、或大盘截图缺失，页面上直接补传/手填，自动重算。
+4. **生成**：点「生成复盘 docx」，就在网页里产出，给出**下载**按钮。
+
+生成用 **Claude Code 订阅**（检测到 `claude` CLI 就用它，走你已有的订阅登录，
+**不需要官方 API key**）；没有 CLI 时用官方 API key；都没有则规则兜底。
+
+## 命令行版
+
+```bash
+pip install -r requirements.txt
+# 有 Claude Code 订阅即可（命令行能跑 `claude`）；或 export ANTHROPIC_API_KEY=sk-...
 ```
 
 ## 用法
@@ -127,6 +146,9 @@ python analyze.py 数据.xlsx --memory templates/memory_sample.json --offline
 ```
 analyze.py               # CLI 入口
 kol_analyze/
+  web.py / web_ui.py     # 本地 Web 应用（Flask）+ 前端页面
+  engine.py              # 生成引擎：Claude Code 订阅(CLI) / 官方API / 规则兜底
+  memory.py              # 命名修正记忆库
   config.py              # 列别名、阈值、模型
   country.py             # 语言/国家归一化 + ad_name 解析(语言/红人/玩法)
   loader.py              # 读后台导出 xlsx（含简单格式兜底）

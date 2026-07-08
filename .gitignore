@@ -8,3 +8,5 @@ venv/
 # 运行产物（示例输出保留在 examples/ 下，可按需忽略）
 /output/
 ~$*.docx
+# Web 应用工作区（上传文件、生成的 docx、记忆库）
+/kol_workspace/
