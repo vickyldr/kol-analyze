@@ -505,6 +505,7 @@ async function renderEditor(){
       每次修订都会记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次生成自动照做。</div>
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="primary" onclick="saveReport()">保存修改</button>
+      ${j.can_ai?`<button class="primary" style="background:#7b4fc0" onclick="polishAll()">✨ 一键润色全文</button>`:''}
       <button class="primary" style="background:var(--good)" onclick="downloadDoc()">下载 docx ↓</button>
       <button class="ghost" onclick="backToReview()">← 返回修正命名</button>
       <span class="desc" id="saveState" style="align-self:center"></span>
@@ -527,6 +528,15 @@ async function saveReport(){
   el('saveState').textContent='已保存，docx 已更新 ✓';
 }
 async function downloadDoc(){await saveReport();window.location='/api/download'}
+async function polishAll(){
+  el('saveState').innerHTML='<span class="spin"></span> AI 正在润色全文（约 1~2 分钟，只改表达不动数字）…';
+  let blocks=BLOCKS.map((b,i)=>({key:b.key,text:el('ta-'+i).value}));
+  let j=await post('/api/polish',{blocks});
+  if(!j.ok){el('saveState').textContent=j.error||'润色失败';return}
+  BLOCKS=j.blocks;
+  BLOCKS.forEach((b,i)=>{let ta=el('ta-'+i);if(ta){ta.value=b.text;ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,600)+'px';}});
+  el('saveState').textContent='已润色，docx 已更新 ✓';
+}
 
 let SNAP_ENGINE='Claude';
 (async()=>{

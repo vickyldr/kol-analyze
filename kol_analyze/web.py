@@ -396,6 +396,26 @@ def api_revise():
                     "style_notes": len(mem.style_notes)})
 
 
+@app.post("/api/polish")
+def api_polish():
+    """一键润色全文：先并入手动编辑，再让 Claude 统一润色，重渲染。"""
+    st = _S()
+    if "data" not in st:
+        return jsonify({"ok": False, "error": "还没有生成结果。"})
+    body = request.get_json(silent=True) or {}
+    for b in body.get("blocks", []):
+        _apply_block(st["data"], b["key"], b.get("text", ""))
+    blocks_map = {b["key"]: b["text"] for b in _blocks(st["data"])}
+    polished = analyzer.polish_document(blocks_map, SETTINGS, st.get("mem"))
+    if not polished:
+        return jsonify({"ok": False, "error": "润色不可用或失败（可手动改）。"})
+    for k, v in polished.items():
+        if isinstance(v, str) and _get_path(st["data"], k) is not None:
+            _apply_block(st["data"], k, v)
+    _rerender(st)
+    return jsonify({"ok": True, "blocks": _blocks(st["data"])})
+
+
 @app.post("/api/report_save")
 def api_report_save():
     """保存手动修改（可选记入记忆库），重渲染 docx。"""

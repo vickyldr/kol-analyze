@@ -60,6 +60,24 @@ def revise_passage(scope: str, text: str, instruction: str, reason: str,
     return out.strip() if out else None
 
 
+def polish_document(blocks_map: dict, settings: Settings, mem=None) -> dict | None:
+    """一键润色全文：传入 {key: 文字}，返回润色后的 {key: 文字}。失败返回 None。"""
+    if engine.available() == "offline":
+        return None
+    user = (prompts.style_block(mem)
+            + "\n下面是复盘各段文字（JSON: key -> 文字），逐段润色后返回同结构 JSON：\n"
+            + json.dumps(blocks_map, ensure_ascii=False, indent=2))
+    out = engine.generate_text(prompts.POLISH_SYSTEM, user, settings.model,
+                               max_tokens=settings.max_tokens, timeout=300)
+    if not out:
+        return None
+    try:
+        res = _extract_json(out)
+        return res if isinstance(res, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 # --------------------------------------------------------------------------
 # 规则兜底
 # --------------------------------------------------------------------------
