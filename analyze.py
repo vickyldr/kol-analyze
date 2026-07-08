@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-from kol_analyze import analyzer, docx_writer, loader, market, metrics, vision
+from kol_analyze import analyzer, docx_writer, loader, market, metrics, scripts, vision
 from kol_analyze.config import Settings
 from kol_analyze.market import MarketContext
 
@@ -71,15 +71,23 @@ def main(argv=None) -> int:
         mkt.kol_total_spend = ds.kol_total_spend
 
     analysis = metrics.compute(ds, mkt, settings.thresholds)
+    # excel 被单一语言主导时，其余语言视为「消耗数据待补全」，避免误判脚本策略
+    top_share = max((l.spend_share for l in analysis.langs), default=0.0)
+    incomplete = ({l.lang for l in analysis.langs if l.spend_share < 5.0}
+                  if top_share >= 85.0 else set())
+    script_analysis = scripts.analyze(analysis.langs, settings.thresholds, incomplete)
     for n in mkt.notes:
         print("  " + n)
+    print(f"  素材维度：{len(script_analysis.scripts)} 类脚本、"
+          f"{len(script_analysis.migrations)} 条迁移建议、"
+          f"{len(script_analysis.formats)} 类形式")
 
     mode = "Claude" if os.environ.get("ANTHROPIC_API_KEY") else "规则兜底(offline)"
     print(f"→ 生成分析（{mode}，model={settings.model}）…")
-    data = analyzer.analyze(analysis, settings, args.title, args.period)
+    data = analyzer.analyze(analysis, script_analysis, settings, args.title, args.period)
 
     out = args.output or f"{args.title}_{args.period or '复盘'}.docx"
-    out = docx_writer.render(data, analysis, out)
+    out = docx_writer.render(data, analysis, script_analysis, out)
     print(f"✓ 已生成复盘文档：{out}")
     return 0
 

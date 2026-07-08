@@ -8,6 +8,7 @@ import os
 from . import prompts
 from .config import Settings, Thresholds
 from .metrics import Analysis, LangMetrics
+from .scripts import ScriptAnalysis
 
 
 def _extract_json(text: str) -> dict:
@@ -22,20 +23,21 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-def analyze(analysis: Analysis, settings: Settings,
+def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
             title: str, period: str) -> dict:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         if not settings.allow_offline_fallback:
             raise RuntimeError("未检测到 ANTHROPIC_API_KEY，且未允许离线兜底。")
-        return _offline(analysis, settings.thresholds, title, period)
+        return _offline(analysis, scripts, settings.thresholds, title, period)
 
     import anthropic
     client = anthropic.Anthropic()
-    facts = prompts.build_facts(analysis)
     user = prompts.USER_TEMPLATE.format(
         title=title, period=period,
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
-        facts=json.dumps(facts, ensure_ascii=False, indent=2))
+        facts=json.dumps(prompts.build_facts(analysis), ensure_ascii=False, indent=2),
+        script_facts=json.dumps(prompts.build_script_facts(scripts),
+                                ensure_ascii=False, indent=2))
     msg = client.messages.create(
         model=settings.model, max_tokens=settings.max_tokens,
         temperature=settings.temperature, system=prompts.SYSTEM,
@@ -45,7 +47,7 @@ def analyze(analysis: Analysis, settings: Settings,
     try:
         return _extract_json(text)
     except (json.JSONDecodeError, ValueError):
-        return _offline(analysis, settings.thresholds, title, period)
+        return _offline(analysis, scripts, settings.thresholds, title, period)
 
 
 # --------------------------------------------------------------------------
@@ -99,7 +101,23 @@ def _lang_block(l: LangMetrics) -> dict:
             "creative_analysis": ca, "todo": todo}
 
 
-def _offline(a: Analysis, th: Thresholds, title: str, period: str) -> dict:
+def _script_section(sa: ScriptAnalysis) -> dict:
+    migrations = [r.reason for r in sa.migrations[:8] if r.reason]
+    fmt_sug = [f.note for f in sa.formats if f.note][:6]
+    strat = [{"name": s.name, "suggestion": s.suggestion}
+             for s in sa.lang_strategies]
+
+    strong_scripts = [r.theme for r in sa.scripts if r.strong_langs][:5]
+    overview = (
+        f"跨语言看，主力脚本集中在 {('、'.join(strong_scripts)) or '少数方向'}；"
+        "口播/街采/MV 各语言覆盖不均，存在明确的迁移与补形式空间（见下）。")
+    return {"overview": overview, "migrations": migrations or ["本期暂无明确的跨语言迁移点。"],
+            "format_suggestions": fmt_sug or ["形式覆盖较均衡。"],
+            "lang_strategies": strat}
+
+
+def _offline(a: Analysis, sa: ScriptAnalysis, th: Thresholds,
+             title: str, period: str) -> dict:
     add = [g.name for g in a.gaps if g.verdict == "加量"]
     cut = [g.name for g in a.gaps if g.verdict in ("削减", "减少")]
     gap = a.coverage_gaps + [g.name for g in a.gaps
@@ -133,5 +151,6 @@ def _offline(a: Analysis, th: Thresholds, title: str, period: str) -> dict:
                       "实际执行与产出都看语言。",
         },
         "gap_summary": gap_summary,
+        "script_section": _script_section(sa),
         "langs": [_lang_block(l) for l in a.langs],
     }

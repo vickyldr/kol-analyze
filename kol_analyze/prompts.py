@@ -11,6 +11,11 @@ SYSTEM = """你是一名资深效果广告 / KOL 投放分析师，为月度 KOL
   不要每个语言写长段落，点到为止。
 - 每个语言的 todo 要具体到动作与素材/红人/玩法，例如
   「继续放大 凝视哥·口播功能录屏介绍」「减少 ROI7 偏低的拉踩Gb 弱版」。
+- 【素材/脚本维度(script_section)】要做【跨语言】的具体建议，这是重点：
+  · 迁移：某脚本/形式在 A 语言跑出，B 语言没做 -> 建议 B 也试（含脚本、MV模板、街采/口播形式）。
+  · 每个脚本 继续做 / 优化 / 砍（跑不出的别做了）。
+  · 某语言跑出率普遍低 -> 建议挖新脚本；脚本单一但有潜力 -> 建议探索新脚本。
+  · 要和前面的国家/语言维度结论呼应，不要各说各话。
 - 只能基于我给的数字、红人、玩法、素材名判断，不要编造。
 
 只输出 JSON，不要任何解释文字，不要 markdown 代码围栏。"""
@@ -23,6 +28,15 @@ OUTPUT_SCHEMA_HINT = {
         "caveat": "口径提醒：KOL 按语言看，英语/西语分开",
     },
     "gap_summary": "二、产出 vs 消耗 缺口分析的【一句话总结】：加量=…；削减=…；覆盖缺口(大盘有量没产出)=…",
+    "script_section": {
+        "overview": "四、素材/脚本维度的总体判断（1-2 段）：哪些脚本/形式是跨语言主力、哪些该迁移",
+        "migrations": ["跨语言迁移建议，每条一句：脚本X在A跑出，建议B也试（可含形式，如口播/街采/MV）"],
+        "format_suggestions": ["形式覆盖建议，每条一句：某语言只做街采、没试口播，可测试"],
+        "lang_strategies": [
+            {"name": "语言名",
+             "suggestion": "该语言脚本策略：继续做哪些强脚本、砍哪些弱脚本、要不要挖/探索新脚本"}
+        ],
+    },
     "langs": [
         {
             "name": "语言名，如 土耳其语",
@@ -33,6 +47,28 @@ OUTPUT_SCHEMA_HINT = {
         }
     ],
 }
+
+
+def build_script_facts(sa) -> dict:
+    migr = [{
+        "脚本": r.theme, "跑出语言": r.best_lang,
+        "建议扩展到": r.migrate_to,
+        "各语言": {c.name: {"条数": c.count, "消耗": round(c.spend, 1),
+                          "ROI7%": round((c.best_roi7 or 0) * 100, 1),
+                          "有转化条数": c.converted}
+                 for c in r.cells.values()},
+    } for r in sa.migrations[:12]]
+    fmts = [{"形式": f.fmt, "在用语言": f.present, "建议试的语言": f.suggest_to}
+            for f in sa.formats]
+    strat = [{"语言": s.name, "脚本数": s.diversity,
+              "跑出率%": round(s.breakout, 2) if s.breakout is not None else None,
+              "主力脚本": s.top_scripts, "档位": s.verdict, "建议": s.suggestion}
+             for s in sa.lang_strategies]
+    top_scripts = [{"脚本": r.theme, "总消耗": round(r.total_spend, 1),
+                    "跑出语言": r.best_lang or "—",
+                    "覆盖语言数": len(r.cells)} for r in sa.scripts[:15]]
+    return {"跨语言迁移建议": migr, "形式覆盖": fmts,
+            "各语言脚本策略": strat, "脚本总榜": top_scripts}
 
 
 def build_facts(analysis) -> dict:
@@ -81,6 +117,9 @@ USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产
 严格按此结构输出（键名一致）：
 {schema}
 
-客观数据：
+【国家/语言维度】客观数据：
 {facts}
+
+【素材/脚本维度】客观数据（用于 script_section）：
+{script_facts}
 """
