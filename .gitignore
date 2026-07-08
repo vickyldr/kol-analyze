@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+.DS_Store
+# 运行产物（示例输出保留在 examples/ 下，可按需忽略）
+/output/
+~$*.docx
