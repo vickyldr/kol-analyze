@@ -2,5 +2,6 @@ python-docx>=1.1.0
 openpyxl>=3.1.0
 pandas>=2.0.0
 flask>=3.0.0
+gunicorn>=21.0.0
 # anthropic 仅在用「官方 API key」时需要；用 Claude Code 订阅(CLI) 则不需要
 anthropic>=0.40.0

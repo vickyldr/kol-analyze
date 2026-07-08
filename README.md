@@ -39,12 +39,20 @@
 
 ---
 
-## Web 版（推荐给 2-3 人用）
+## 上线部署（点开链接就能用）
+
+不想装环境、想给 2-3 人一个网址直接用 → 看 **[DEPLOY.md](DEPLOY.md)**，
+用 Railway 点几下就上线（自带访问密码 + 历史持久化）。
+
+## 本地 Web 版
 
 ```bash
 pip install -r requirements.txt
 python -m kol_analyze.web          # 浏览器打开 http://127.0.0.1:8000
 ```
+
+设了环境变量 `KOL_PASSWORD` 就会要求登录；`KOL_WORKSPACE` 指定数据/历史目录；
+生成引擎按 `CLAUDE_CODE_OAUTH_TOKEN` → `ANTHROPIC_API_KEY` → 离线兜底 依次选用。
 
 网页里完成整个流程：
 

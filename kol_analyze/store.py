@@ -14,13 +14,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path("kol_workspace").resolve()
+# 工作区目录：本地默认 ./kol_workspace；云上用环境变量 KOL_WORKSPACE
+# 指向挂载的持久盘（如 /data），这样记忆库与历史在重新部署后也不丢。
+ROOT = Path(os.environ.get("KOL_WORKSPACE", "kol_workspace")).resolve()
+ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def _safe(s: str) -> str:

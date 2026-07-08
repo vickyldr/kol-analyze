@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+.venv
+venv
+kol_workspace
+examples/*.docx
+*.log
+.DS_Store

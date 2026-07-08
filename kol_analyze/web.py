@@ -11,21 +11,49 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, session
+from flask import (Flask, jsonify, redirect, request, send_file, session)
 
 from . import (analyzer, docx_writer, engine, loader, market, memory,
                metrics, scripts, store, vision)
 from .config import PRODUCTS, Settings
-from .web_ui import PAGE
+from .web_ui import LOGIN_PAGE, PAGE
 
 app = Flask(__name__)
-app.secret_key = "kol-local-" + uuid.uuid4().hex
+# 部署到线上时用固定密钥（环境变量），本地随机即可
+app.secret_key = os.environ.get("KOL_SECRET") or ("kol-local-" + uuid.uuid4().hex)
 app.json.sort_keys = False  # 保持产品插入顺序（RM/RC/RO），别按字母排
+
+# 访问密码：设了 KOL_PASSWORD 就要求登录（线上必设，防止链接被外人打开）
+ACCESS_PW = os.environ.get("KOL_PASSWORD", "")
+
+
+@app.before_request
+def _guard():
+    if not ACCESS_PW:
+        return None
+    if request.path in ("/login", "/favicon.ico"):
+        return None
+    if session.get("authed"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "未登录"}), 401
+    return redirect("/login")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form.get("pw") == ACCESS_PW:
+            session["authed"] = True
+            return redirect("/")
+        return LOGIN_PAGE.replace("<!--ERR-->", "密码不对，再试一次。")
+    return LOGIN_PAGE.replace("<!--ERR-->", "")
 
 SESSIONS: dict[str, dict] = {}
 SETTINGS = Settings()

@@ -1,5 +1,29 @@
 """前端页面（单文件 HTML/CSS/JS，内嵌在 Flask 里返回）。"""
 
+LOGIN_PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>KOL 复盘分析 · 登录</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef1f7;
+  font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a2233}
+@media(prefers-color-scheme:dark){body{background:#0f141d;color:#e8edf6}}
+.box{background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(20,30,50,.12);padding:32px;width:min(360px,90vw);text-align:center}
+@media(prefers-color-scheme:dark){.box{background:#161d29}}
+.logo{width:44px;height:44px;border-radius:11px;background:linear-gradient(135deg,#3355a4,#6f93e0);
+  display:grid;place-items:center;color:#fff;font-weight:800;font-size:22px;margin:0 auto 14px}
+h1{font-size:17px;margin:0 0 4px}p{color:#8a94a6;font-size:12.5px;margin:0 0 18px}
+input{width:100%;padding:11px 12px;border:1px solid #dce2ec;border-radius:9px;font-size:14px;box-sizing:border-box;background:transparent;color:inherit}
+button{width:100%;margin-top:12px;padding:11px;border:none;border-radius:9px;background:#3355a4;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.err{color:#c62828;font-size:12.5px;margin-top:10px;min-height:16px}
+</style></head><body>
+<form class="box" method="post" action="/login">
+  <div class="logo">复</div><h1>KOL 月度复盘分析</h1><p>请输入访问密码</p>
+  <input type="password" name="pw" placeholder="访问密码" autofocus>
+  <button type="submit">进入</button>
+  <div class="err"><!--ERR--></div>
+</form></body></html>
+"""
+
 PAGE = r"""<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
