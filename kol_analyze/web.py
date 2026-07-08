@@ -1,37 +1,35 @@
 """本地 Web 应用（给 2-3 人用）。
 
-    python -m kol_analyze.web         # 然后浏览器打开 http://127.0.0.1:8000
+    python -m kol_analyze.web         # 浏览器打开 http://127.0.0.1:8000
 
-流程：上传后台导出 xlsx + 大盘截图 → 审阅并修正命名（存进记忆库）
-     → 补充缺失的国家/截图 → 一键生成复盘 docx 并下载。
+流程：选产品(RM/RC/RO) → 上传后台 xlsx + 大盘截图 → 审阅并修正命名(存记忆库)
+     → 补充缺失 → 生成复盘 docx 并下载。每次生成都归档进「历史复盘」。
 
 生成分析用 Claude Code 订阅（CLI），无需官方 API key。
+记忆库与历史按产品分开存。
 """
 
 from __future__ import annotations
 
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import (Flask, jsonify, request, send_file, session)
+from flask import Flask, jsonify, request, send_file, session
 
 from . import (analyzer, docx_writer, engine, loader, market, memory,
-               metrics, scripts, vision)
-from .config import Settings
+               metrics, scripts, store, vision)
+from .config import PRODUCTS, Settings
 from .web_ui import PAGE
 
 app = Flask(__name__)
 app.secret_key = "kol-local-" + uuid.uuid4().hex
-
-# 工作区：每个会话一个目录放上传文件；记忆库全局共享持久化
-# 用绝对路径，避免 send_file 相对 Flask root_path 解析出错
-ROOT = Path("kol_workspace").resolve()
-ROOT.mkdir(exist_ok=True)
-MEMORY_PATH = ROOT / "memory.json"
+app.json.sort_keys = False  # 保持产品插入顺序（RM/RC/RO），别按字母排
 
 SESSIONS: dict[str, dict] = {}
 SETTINGS = Settings()
+DEFAULT_PRODUCT = next(iter(PRODUCTS))
 
 
 def _sid() -> str:
@@ -39,10 +37,8 @@ def _sid() -> str:
         session["sid"] = uuid.uuid4().hex
     sid = session["sid"]
     if sid not in SESSIONS:
-        wd = ROOT / sid
-        (wd / "data").mkdir(parents=True, exist_ok=True)
-        (wd / "shots").mkdir(parents=True, exist_ok=True)
-        SESSIONS[sid] = {"wd": wd, "market": market.MarketContext(),
+        SESSIONS[sid] = {"sid": sid, "product": DEFAULT_PRODUCT,
+                         "market": market.MarketContext(),
                          "gen": {"status": "idle"}, "meta": {}}
     return sid
 
@@ -51,13 +47,17 @@ def _S() -> dict:
     return SESSIONS[_sid()]
 
 
+def _wd(st: dict) -> Path:
+    return store.session_dir(st["product"], st["sid"])
+
+
 # --------------------------------------------------------------------------
 # 核心：跑分析（不含 Claude 写作，秒级）
 # --------------------------------------------------------------------------
 
 def _recompute(st: dict) -> dict:
-    mem = memory.load(MEMORY_PATH)
-    data_dir = st["wd"] / "data"
+    mem = memory.load(store.memory_path(st["product"]))
+    data_dir = _wd(st) / "data"
     files = [f for f in data_dir.iterdir()
              if f.suffix.lower() in (".xlsx", ".xls", ".csv")]
     if not files:
@@ -79,36 +79,26 @@ def _recompute(st: dict) -> dict:
 
 
 def _snapshot(st: dict) -> dict:
-    a = st["analysis"]
-    sa = st["sa"]
-    mem = st["mem"]
-
+    a, sa, mem = st["analysis"], st["sa"], st["mem"]
     rows = []
     for l in a.langs:
         for c in l.creatives:
             rows.append({
-                "ad_name": c.ad_name,
-                "play": c.play or "",
-                "lang": l.name,
+                "ad_name": c.ad_name, "play": c.play or "", "lang": l.name,
                 "influencer": c.influencer or "",
                 "scripts": scripts.script_themes(c, mem),
-                "formats": scripts.format_tags(c, mem),
-                "tier": c.tier,
-                "spend": round(c.spend, 1),
-                "roi7": round((c.roi7 or 0) * 100, 1),
+                "formats": scripts.format_tags(c, mem), "tier": c.tier,
+                "spend": round(c.spend, 1), "roi7": round((c.roi7 or 0) * 100, 1),
             })
     rows.sort(key=lambda r: r["spend"], reverse=True)
-
     gaps = [{"name": g.name, "ad": g.ad_market_share, "kol": g.kol_spend_share,
              "pub": g.publish_share, "breakout": g.breakout_rate,
              "verdict": g.verdict, "line": g.one_line} for g in a.gaps]
-
-    migrations = [{"theme": r.theme, "best": r.best_lang,
-                   "to": r.migrate_to, "reason": r.reason}
-                  for r in sa.migrations[:12]]
-
-    missing = _missing(st)
+    migrations = [{"theme": r.theme, "best": r.best_lang, "to": r.migrate_to,
+                   "reason": r.reason} for r in sa.migrations[:12]]
     return {
+        "product": st["product"], "product_name": PRODUCTS.get(st["product"], st["product"]),
+        "detected_products": st["ds"].products,
         "stats": {"creatives": sum(l.count for l in a.langs),
                   "langs": len(a.langs), "scripts": len(sa.scripts),
                   "migrations": len(sa.migrations),
@@ -117,26 +107,23 @@ def _snapshot(st: dict) -> dict:
                    "spend_share": round(l.spend_share, 1),
                    "breakout": round(l.breakout_rate, 1) if l.breakout_rate is not None else None}
                   for l in a.langs],
-        "rows": rows,
-        "gaps": gaps,
-        "migrations": migrations,
-        "memory": memory.to_dict(mem),
-        "missing": missing,
-        "notes": st["market"].notes,
+        "rows": rows, "gaps": gaps, "migrations": migrations,
+        "memory": memory.to_dict(mem), "missing": _missing(st),
+        "notes": st["market"].notes, "history": _history_list(st["product"]),
     }
 
 
 def _missing(st: dict) -> dict:
-    """检测需要补充的地方：大盘缺失、语言消耗疑似未填充。"""
     mkt = st["market"]
-    out = {"market": mkt.is_empty(),
-           "incomplete_langs": sorted(
-               st["analysis"].langs and
-               [l.name for l in st["analysis"].langs if l.lang in st.get("incomplete", set())]
-               or [])}
-    # 大盘有量但 KOL 完全没产出的语言（覆盖缺口）
-    out["coverage_gaps"] = st["analysis"].coverage_gaps
-    return out
+    inc = [l.name for l in st["analysis"].langs if l.lang in st.get("incomplete", set())]
+    return {"market": mkt.is_empty(), "incomplete_langs": sorted(inc),
+            "coverage_gaps": st["analysis"].coverage_gaps}
+
+
+def _history_list(product: str) -> list[dict]:
+    return [{"id": e.id, "period": e.period, "title": e.title,
+             "created": e.created, "stats": e.stats}
+            for e in store.list_history(product)]
 
 
 # --------------------------------------------------------------------------
@@ -149,18 +136,26 @@ def index():
     return PAGE
 
 
+@app.get("/api/engine")
+def api_engine():
+    return jsonify({"engine": engine.available(), "label": engine.label(),
+                    "products": PRODUCTS})
+
+
 @app.post("/api/analyze")
 def api_analyze():
     st = _S()
+    st["product"] = request.form.get("product") or DEFAULT_PRODUCT
     st["meta"] = {"title": request.form.get("title") or "月度 KOL 广告复盘",
                   "period": request.form.get("period") or ""}
+    wd = _wd(st)
     for f in request.files.getlist("data"):
         if f.filename:
-            f.save(st["wd"] / "data" / Path(f.filename).name)
+            f.save(wd / "data" / Path(f.filename).name)
     shots = []
     for f in request.files.getlist("shots"):
         if f.filename:
-            p = st["wd"] / "shots" / Path(f.filename).name
+            p = wd / "shots" / Path(f.filename).name
             f.save(p)
             shots.append(str(p))
     if shots:
@@ -170,15 +165,15 @@ def api_analyze():
 
 @app.post("/api/supplement")
 def api_supplement():
-    """补充缺失的国家 excel 或大盘截图，然后重算。"""
     st = _S()
+    wd = _wd(st)
     for f in request.files.getlist("data"):
         if f.filename:
-            f.save(st["wd"] / "data" / Path(f.filename).name)
+            f.save(wd / "data" / Path(f.filename).name)
     shots = []
     for f in request.files.getlist("shots"):
         if f.filename:
-            p = st["wd"] / "shots" / Path(f.filename).name
+            p = wd / "shots" / Path(f.filename).name
             f.save(p)
             shots.append(str(p))
     if shots:
@@ -190,7 +185,6 @@ def api_supplement():
 
 @app.post("/api/market")
 def api_market():
-    """手填/修正大盘数据（截图读不到时）。"""
     st = _S()
     st["market"] = market.from_dict(request.get_json(force=True))
     return jsonify(_recompute(st))
@@ -198,29 +192,22 @@ def api_market():
 
 @app.post("/api/correct")
 def api_correct():
-    """保存一条命名修正到记忆库，并即时重算分类。"""
     st = _S()
     body = request.get_json(force=True)
-    mem = memory.load(MEMORY_PATH)
+    mem = memory.load(store.memory_path(st["product"]))
     scope = body.get("scope", "keyword")
-    add_script = body.get("add_script", [])
-    set_script = body.get("set_script", [])
-    add_format = body.get("add_format", [])
-    note = body.get("note", "")
-
+    common = dict(add_script=body.get("add_script", []),
+                  set_script=body.get("set_script", []),
+                  add_format=body.get("add_format", []), note=body.get("note", ""))
     if scope == "exact":
-        key = body.get("key", "")
-        mem.add_play_override(key, set_script=set_script, add_script=add_script,
-                              add_format=add_format, note=note)
+        mem.add_play_override(body.get("key", ""), **common)
     elif scope == "keyword":
-        mem.keyword_rules.append(memory.KeywordRule(
-            match=body.get("match", ""), add_script=add_script,
-            set_script=set_script, add_format=add_format, note=note))
+        mem.keyword_rules.append(memory.KeywordRule(match=body.get("match", ""), **common))
     elif scope == "influencer":
         mem.influencer_alias[body.get("from", "")] = body.get("to", "")
     elif scope == "lang":
         mem.lang_overrides[body.get("key", "")] = body.get("to", "")
-    mem.save(MEMORY_PATH)
+    mem.save(store.memory_path(st["product"]))
     return jsonify(_recompute(st))
 
 
@@ -237,19 +224,20 @@ def api_generate():
         try:
             data = analyzer.analyze(state["analysis"], state["sa"], SETTINGS,
                                     state["meta"]["title"], state["meta"]["period"])
-            out = state["wd"] / "复盘.docx"
+            out = _wd(state) / "复盘.docx"
             docx_writer.render(data, state["analysis"], state["sa"], out)
-            state["gen"] = {"status": "done", "file": str(out)}
+            created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
+            stats = {"creatives": sum(l.count for l in state["analysis"].langs),
+                     "langs": len(state["analysis"].langs),
+                     "migrations": len(state["sa"].migrations)}
+            entry = store.archive(state["product"], state["meta"]["period"] or "复盘",
+                                  state["meta"]["title"], created, out, data, stats)
+            state["gen"] = {"status": "done", "file": str(out), "hid": entry.id}
         except Exception as e:  # noqa
             state["gen"] = {"status": "error", "error": str(e)}
 
     threading.Thread(target=worker, args=(st,), daemon=True).start()
     return jsonify({"ok": True, "status": "running", "engine": engine.label()})
-
-
-@app.get("/api/engine")
-def api_engine():
-    return jsonify({"engine": engine.available(), "label": engine.label()})
 
 
 @app.get("/api/status")
@@ -269,6 +257,22 @@ def api_download():
                      download_name=f"{title}_{period or '复盘'}.docx")
 
 
+@app.get("/api/history")
+def api_history():
+    prod = request.args.get("product") or _S()["product"]
+    return jsonify({"product": prod, "history": _history_list(prod)})
+
+
+@app.get("/api/history/download")
+def api_history_download():
+    prod = request.args.get("product") or _S()["product"]
+    entry = store.get_history(prod, request.args.get("id", ""))
+    if not entry or not entry.report().exists():
+        return jsonify({"ok": False, "error": "历史记录不存在。"}), 404
+    return send_file(entry.report(), as_attachment=True,
+                     download_name=f"{entry.title}_{entry.period}.docx")
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -276,6 +280,7 @@ def main():
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
     print(f"KOL 复盘分析 · 本地 Web —— 引擎：{engine.label()}")
+    print(f"产品：{'、'.join(f'{k}({v})' for k, v in PRODUCTS.items())}")
     print(f"打开浏览器： http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=True)
 

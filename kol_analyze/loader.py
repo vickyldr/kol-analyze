@@ -60,6 +60,7 @@ class Dataset:
     langs: list[LangGroup]
     summary: Summary | None = None
     kol_total_spend: float = 0.0
+    products: dict[str, int] = field(default_factory=dict)  # 检测到的产品 -> 素材条数
 
 
 def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -149,7 +150,14 @@ def _load_backend(sheets: dict[str, pd.DataFrame], _mem=None) -> Dataset:
     summary = _load_summary(sheets)
     langs = sorted(groups.values(), key=lambda g: sum(x.spend for x in g.rows),
                    reverse=True)
-    return Dataset(langs=langs, summary=summary, kol_total_spend=total_spend)
+    products: dict[str, int] = {}
+    for g in groups.values():
+        for r in g.rows:
+            pr = country.detect_product(r.ad_name)
+            if pr:
+                products[pr] = products.get(pr, 0) + 1
+    return Dataset(langs=langs, summary=summary, kol_total_spend=total_spend,
+                   products=products)
 
 
 def _load_summary(sheets: dict[str, pd.DataFrame]) -> Summary | None:

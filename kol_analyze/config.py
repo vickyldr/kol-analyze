@@ -8,6 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# 产品线：广告命名前缀 -> 产品名。各产品命名大差不差（RM_/RC_/RO_ …），
+# 记忆库与历史复盘按产品分开存。新增产品在这里加一行即可。
+PRODUCTS: dict[str, str] = {
+    "RM": "Rythmix",
+    "RC": "Recco",
+    "RO": "Rymo",
+}
+
+
 # 内部标准字段 -> 可能出现在输入表里的列名（大小写/空格不敏感匹配）
 COLUMN_ALIASES: dict[str, list[str]] = {
     "creative": [

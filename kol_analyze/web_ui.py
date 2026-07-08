@@ -121,6 +121,12 @@ input[type=text],textarea,select{width:100%;border:1px solid var(--line);border-
   <div id="view-upload">
     <div class="card"><div class="bd">
       <div class="eyebrow">Step 1</div><h3 style="margin:4px 0 12px">上传本期数据</h3>
+      <div class="row2" style="margin-bottom:14px">
+        <div><label class="fld">产品线（命名前缀 RM/RC/RO …记忆库与历史按产品分开）</label>
+          <select id="product" onchange="loadHistory()"></select>
+          <div class="desc" id="prodHint" style="margin-top:5px"></div></div>
+        <div></div>
+      </div>
       <div class="row2">
         <div>
           <label class="fld">后台导出 xlsx（含 KOL素材 sheet，可多个国家文件）</label>
@@ -143,6 +149,11 @@ input[type=text],textarea,select{width:100%;border:1px solid var(--line);border-
         <button class="primary" onclick="analyze()">开始分析 →</button>
         <span class="desc" id="uploadHint">大盘截图可留空，之后在页面里手填或补传。</span>
       </div>
+    </div></div>
+    <div class="card" id="historyCard" style="display:none"><div class="bd">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div class="eyebrow">History</div><h3 style="margin:0" id="histTitle">历史复盘</h3></div>
+      <div id="historyList"></div>
     </div></div>
   </div>
 
@@ -245,16 +256,37 @@ function renderFiles(arr,listId){el(listId).textContent=arr.map(f=>f.name).join(
 wireDrop('dropData','fData',dataFiles,'fDataList');
 wireDrop('dropShot','fShot',shotFiles,'fShotList');
 
+let PRODUCTS={};
+async function loadHistory(){
+  let prod=el('product').value;
+  let j=await jget('/api/history?product='+encodeURIComponent(prod));
+  let h=j.history||[];
+  el('historyCard').style.display=h.length?'block':'none';
+  el('histTitle').textContent='历史复盘 · '+(PRODUCTS[prod]||prod);
+  el('historyList').innerHTML=h.map(e=>`<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)">
+    <span class="lang">${e.period}</span>
+    <span style="font-size:12.5px">${e.title}</span>
+    <span class="desc">${e.created}</span>
+    <span class="desc num">${e.stats.creatives||''}素材 · ${e.stats.langs||''}语言</span>
+    <span class="sp" style="flex:1"></span>
+    <a class="ghost" style="text-decoration:none" href="/api/history/download?product=${encodeURIComponent(prod)}&id=${encodeURIComponent(e.id)}">下载 ↓</a></div>`).join('');
+}
 async function analyze(){
   if(!dataFiles.length){alert('请先选择后台导出的 xlsx');return}
   el('uploadHint').innerHTML='<span class="spin"></span> 正在分析'+(shotFiles.length?'并识别截图':'')+'…';
   let fd=new FormData();
   dataFiles.forEach(f=>fd.append('data',f));
   shotFiles.forEach(f=>fd.append('shots',f));
+  fd.append('product',el('product').value);
   fd.append('title',el('title').value);fd.append('period',el('period').value);
   let r=await fetch('/api/analyze',{method:'POST',body:fd}); let j=await r.json();
   if(!j.ok){el('uploadHint').textContent=j.error||'分析失败';return}
-  SNAP=j; showReview();
+  SNAP=j;
+  if(j.detected_products&&Object.keys(j.detected_products).length){
+    let dp=Object.entries(j.detected_products).map(([k,v])=>k+'×'+v).join('、');
+    if(!j.detected_products[j.product])el('uploadHint').textContent='注意：数据里检测到 '+dp+'，与所选产品 '+j.product+' 不一致，请确认。';
+  }
+  showReview();
 }
 function showReview(){
   el('view-upload').classList.add('hidden');
@@ -267,6 +299,7 @@ function showReview(){
 function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight()}
 function renderStrip(){
   let s=SNAP.stats;
+  el('engineLabel').textContent='本地 · '+SNAP_ENGINE+' · '+(SNAP.product_name||SNAP.product||'');
   el('strip').innerHTML=[
    ['KOL 素材',s.creatives,'条'],['识别语言',s.langs,'种'],['脚本主题',s.scripts,'类'],
    ['迁移建议',s.migrations,'条'],['KOL 占大盘',s.kol_share==null?'—':s.kol_share,'%']
@@ -378,8 +411,8 @@ async function generate(){
 async function poll(){
   let s=await jget('/api/status');
   if(s.status==='running'){setTimeout(poll,2500);return}
-  if(s.status==='done'){el('genBody').innerHTML=`<div style="font-size:34px">✅</div>
-    <div style="margin:12px 0;font-weight:700;font-size:16px">复盘文档已生成</div>
+  if(s.status==='done'){loadHistory();el('genBody').innerHTML=`<div style="font-size:34px">✅</div>
+    <div style="margin:12px 0;font-weight:700;font-size:16px">复盘文档已生成，并已归档进历史</div>
     <a class="primary" style="text-decoration:none;padding:11px 22px" href="/api/download">下载 docx ↓</a>
     <div style="margin-top:16px"><button class="ghost" onclick="backToReview()">← 返回继续修正</button></div>`;}
   else{el('genBody').innerHTML='生成失败：'+(s.error||'未知错误')+'<div style="margin-top:14px"><button class="ghost" onclick="backToReview()">← 返回</button></div>';}
@@ -388,9 +421,16 @@ function backToReview(){el('view-done').classList.add('hidden');el('view-review'
   el('st3').className='step';el('st2').className='step active';el('genBtn').disabled=false}
 
 let SNAP_ENGINE='Claude';
-jget('/api/status'); // noop
-fetch('/api/analyze',{method:'OPTIONS'}).catch(()=>{});
-(async()=>{try{let e=await jget('/api/engine');el('engineLabel').textContent='本地 · '+e.label;SNAP_ENGINE=e.label}catch(_){el('engineLabel').textContent='本地'}})();
+(async()=>{
+  try{
+    let e=await jget('/api/engine');
+    el('engineLabel').textContent='本地 · '+e.label; SNAP_ENGINE=e.label;
+    PRODUCTS=e.products||{};
+    el('product').innerHTML=Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');
+    el('prodHint').textContent='命名前缀 '+Object.keys(PRODUCTS).join(' / ')+' 都能识别；记忆库与历史按此产品分开保存。';
+    loadHistory();
+  }catch(_){el('engineLabel').textContent='本地'}
+})();
 </script>
 </body></html>
 """

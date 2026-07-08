@@ -48,12 +48,15 @@ python -m kol_analyze.web          # 浏览器打开 http://127.0.0.1:8000
 
 网页里完成整个流程：
 
+0. **选产品**：RM(Rythmix) / RC(Recco) / RO(Rymo)。各产品命名前缀不同但结构一致，
+   都能识别；**记忆库与历史复盘按产品分开保存**。
 1. **上传**后台导出 xlsx + 大盘截图 → 一键分析。
 2. **审阅并修正命名**：实习生命名不准的地方，点素材行「修正」，给它加/改
    脚本、形式标签（可多个），选「凡含此玩法」或「仅这条」，**存进记忆库**，
    下月自动套用。右侧实时显示记忆库与缺口/迁移要点。
 3. **补缺**：某国 excel 没传、或大盘截图缺失，页面上直接补传/手填，自动重算。
-4. **生成**：点「生成复盘 docx」，就在网页里产出，给出**下载**按钮。
+4. **生成**：点「生成复盘 docx」，就在网页里产出，给出**下载**按钮，
+   同时**归档进历史**（上传页顶部按产品列出每月复盘，可随时回看/重新下载）。
 
 生成用 **Claude Code 订阅**（检测到 `claude` CLI 就用它，走你已有的订阅登录，
 **不需要官方 API key**）；没有 CLI 时用官方 API key；都没有则规则兜底。
@@ -106,6 +109,19 @@ python analyze.py 你的后台导出.xlsx --offline
 
 无 API key 或想离线跑时，可改用 `--market market.json` 手填这些数字，
 格式见 `templates/market_sample.json`。
+
+## 多产品 + 历史复盘
+
+- **多产品**：`RM`(Rythmix) / `RC`(Recco) / `RO`(Rymo) —— 广告命名前缀不同、结构一致，
+  工具都能解析（见 `config.PRODUCTS`，加产品只需加一行）。记忆库、历史各自独立：
+  `kol_workspace/<产品>/memory.json`、`kol_workspace/<产品>/history/`。
+- **历史复盘**：每次生成都会归档（docx + 分析 JSON + 元信息），
+  按产品在页面顶部列出，随时回看/重新下载。命令行加 `--archive` 也会归档。
+
+```bash
+# 命令行指定产品并归档
+python analyze.py 数据.xlsx --product RM --archive --period "5月" --market templates/market_sample.json
+```
 
 ## 命名修正记忆库（应对实习生命名不准）
 

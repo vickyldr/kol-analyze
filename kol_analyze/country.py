@@ -9,6 +9,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .config import PRODUCTS
+
+# 命名锚点：产品前缀(RM/RC/RO…) 或 KOL，后跟 2 位语言码
+_ANCHORS = set(PRODUCTS.keys()) | {"KOL"}
+
 # 语言代码 -> 中文语言名（用于 KOL 产出/素材分析）
 LANG_NAME: dict[str, str] = {
     "TR": "土耳其语", "US": "英语", "EN": "英语", "SP": "西语", "ES": "西语",
@@ -63,11 +68,11 @@ def parse_ad_name(name: str) -> NameParts:
     n = str(name)
     toks = n.split("_")
 
-    # 1) 定位语言锚点：RM_<CC>_ 或 KOL_<CC>_
+    # 1) 定位语言锚点：<产品>_<CC>_ 或 KOL_<CC>_（产品含 RM/RC/RO…）
     lang = None
     core = 0  # 语言代码所在的 token 索引
     for i in range(len(toks) - 1):
-        if toks[i].strip().upper() in ("RM", "KOL") and \
+        if toks[i].strip().upper() in _ANCHORS and \
                 re.fullmatch(r"[A-Za-z]{2}", toks[i + 1].strip()):
             lang = toks[i + 1].strip().upper()
             core = i + 1
@@ -101,6 +106,15 @@ def parse_ad_name(name: str) -> NameParts:
         influencer = mid[0] if mid else None
 
     return NameParts(lang=lang, influencer=influencer, play=play)
+
+
+def detect_product(name: str) -> str | None:
+    """从 ad_name 里认出产品前缀（RM/RC/RO…）。"""
+    for t in str(name).split("_"):
+        u = t.strip().upper()
+        if u in PRODUCTS:
+            return u
+    return None
 
 
 def clean_play(play: str | None) -> str | None:

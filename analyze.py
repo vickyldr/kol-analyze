@@ -23,8 +23,8 @@ import sys
 from pathlib import Path
 
 from kol_analyze import (analyzer, docx_writer, engine, loader, market, memory,
-                         metrics, scripts, vision)
-from kol_analyze.config import Settings
+                         metrics, scripts, store, vision)
+from kol_analyze.config import PRODUCTS, Settings
 from kol_analyze.market import MarketContext
 
 
@@ -37,7 +37,12 @@ def main(argv=None) -> int:
     ap.add_argument("--period", default="", help="周期，如 5月")
     ap.add_argument("--shot", nargs="*", default=[], help="大盘截图（1~4 张）")
     ap.add_argument("--market", default=None, help="大盘数据 JSON（替代截图）")
-    ap.add_argument("--memory", default=None, help="命名修正记忆库 JSON")
+    ap.add_argument("--memory", default=None,
+                    help="命名修正记忆库 JSON（默认按产品 kol_workspace/<产品>/memory.json）")
+    ap.add_argument("--product", default=next(iter(PRODUCTS)),
+                    help=f"产品线 {list(PRODUCTS)}（决定记忆库/历史归档）")
+    ap.add_argument("--archive", action="store_true",
+                    help="把本次结果归档进历史 kol_workspace/<产品>/history")
     ap.add_argument("--model", default=None, help="覆盖模型")
     ap.add_argument("--offline", action="store_true", help="不调用 Claude，规则兜底")
     args = ap.parse_args(argv)
@@ -53,10 +58,11 @@ def main(argv=None) -> int:
     if args.offline:
         os.environ["KOL_FORCE_OFFLINE"] = "1"
 
-    mem = memory.load(args.memory)
-    if args.memory:
-        print(f"→ 载入记忆库：{args.memory}（{len(mem.play_overrides)} 精确修正、"
-              f"{len(mem.keyword_rules)} 关键词规则）")
+    mem_path = args.memory or store.memory_path(args.product)
+    mem = memory.load(mem_path)
+    print(f"→ 产品：{args.product}（{PRODUCTS.get(args.product, args.product)}）"
+          f" · 记忆库：{mem_path}（{len(mem.play_overrides)} 精确、"
+          f"{len(mem.keyword_rules)} 关键词）")
 
     print(f"→ 读取数据：{inp}")
     ds = loader.load(inp, mem)
@@ -95,6 +101,16 @@ def main(argv=None) -> int:
     out = args.output or f"{args.title}_{args.period or '复盘'}.docx"
     out = docx_writer.render(data, analysis, script_analysis, out)
     print(f"✓ 已生成复盘文档：{out}")
+
+    if args.archive:
+        from datetime import datetime
+        created = datetime.now().strftime("%Y%m%d-%H%M")
+        stats = {"creatives": sum(l.count for l in analysis.langs),
+                 "langs": len(analysis.langs),
+                 "migrations": len(script_analysis.migrations)}
+        entry = store.archive(args.product, args.period or "复盘", args.title,
+                              created, Path(out), data, stats)
+        print(f"✓ 已归档进历史：{entry.dir}")
     return 0
 
 
