@@ -124,6 +124,20 @@ input[type=text],textarea,select{width:100%;border:1px solid var(--line);border-
 .hidden{display:none}
 .spin{width:16px;height:16px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;display:inline-block;animation:sp 1s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
+textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;font-size:13px}
+.sechd{font-size:15px;font-weight:750;color:var(--ink);margin:22px 0 10px;padding-bottom:7px;border-bottom:2px solid var(--line)}
+.blk{margin-bottom:16px}
+.blk .bl{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.blk .bl .eyebrow{color:var(--accent)}
+.panelhd{display:flex;align-items:center;gap:10px;padding:13px 15px;cursor:pointer;user-select:none}
+.panelhd .car{color:var(--ink-3);transition:transform .15s;font-size:12px}
+.panelhd.open .car{transform:rotate(90deg)}
+.panelhd .nm{font-weight:700;font-size:14px}
+.panelhd .sub{color:var(--ink-3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.panelbody{padding:2px 15px 14px}
+.jumpchips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 14px}
+.jchip{padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);cursor:pointer;font-size:12.5px;color:var(--accent-ink);font-weight:600}
+.jchip:hover{background:var(--accent-soft);border-color:var(--accent)}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.strip{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}}
 </style></head><body>
 <div class="wrap">
@@ -489,39 +503,84 @@ function backToReview(){el('view-done').classList.add('hidden');el('view-review'
   el('st3').className='step';el('st2').className='step active';el('genBtn').disabled=false}
 
 // ---- 生成后：预览 & 修订 ----
-let BLOCKS=[];
+let BLOCKS=[], CAN_AI=false;
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function autoGrow(t){t.style.height='auto';t.style.height=(t.scrollHeight+2)+'px'}
+function subLabel(l){return l.indexOf(' · ')>=0?l.split(' · ').slice(1).join(' · '):l}
+function blockHtml(i){
+  let b=BLOCKS[i];
+  let ai=CAN_AI?`<button class="fixbtn" onclick="toggleAI(${i})">让 AI 改</button>`:'';
+  return `<div class="blk">
+    <div class="bl"><div class="eyebrow">${esc(subLabel(b.label))}</div><div style="flex:1"></div>${ai}</div>
+    <textarea id="ta-${i}" class="grow" oninput="autoGrow(this)" style="width:100%">${esc(b.text)}</textarea>
+    <input type="text" id="rm-${i}" placeholder="（可选）记住：为什么这么改，下次照做" style="margin-top:6px;font-size:12px">
+    <div id="ai-${i}" class="hidden" style="margin-top:8px;background:var(--panel-2);padding:10px;border-radius:8px">
+      <input type="text" id="rs-${i}" placeholder="为什么觉得原来不好（可留空）" style="margin-bottom:6px">
+      <input type="text" id="in-${i}" placeholder="想改成什么样，如：更口语 / 点名具体红人玩法 / 别用套话">
+      <div style="margin-top:8px"><button class="primary" onclick="doRevise(${i})">让 AI 重写这段</button>
+        <span class="desc" id="stt-${i}" style="margin-left:8px"></span></div>
+    </div></div>`;
+}
+function groupBlocks(){
+  let ad=[],gap=[],script=[],langOrder=[],langMap={};
+  BLOCKS.forEach((b,i)=>{
+    let k=b.key;
+    if(k.indexOf('ad_section')===0) ad.push(i);
+    else if(k==='gap_summary') gap.push(i);
+    else if(k.indexOf('script_section.overview')===0||k.indexOf('script_section.migrations')===0||k.indexOf('script_section.format_suggestions')===0) script.push(i);
+    else{let nm=(b.label.split(' · ')[0]||'其他').trim();
+      if(!langMap[nm]){langMap[nm]=[];langOrder.push(nm);} langMap[nm].push(i);}
+  });
+  return {ad,gap,script,langOrder,langMap};
+}
+function section(title, idxs){
+  if(!idxs.length) return '';
+  return `<div class="sechd">${title}</div>`+idxs.map(blockHtml).join('');
+}
 async function renderEditor(){
   let j=await jget('/api/report'); if(!j.ok){el('genBody').innerHTML=j.error||'无结果';return}
-  BLOCKS=j.blocks;
-  let cards=BLOCKS.map((b,i)=>{
-    let rows=Math.min(14,Math.max(2,b.text.split('\n').length+1));
-    let ai=j.can_ai?`<button class="fixbtn" onclick="toggleAI(${i})">让 AI 改</button>`:'';
-    return `<div class="card"><div class="bd">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <div class="eyebrow">${esc(b.label)}</div><div style="flex:1"></div>${ai}</div>
-      <textarea id="ta-${i}" rows="${rows}" style="width:100%;resize:vertical">${esc(b.text)}</textarea>
-      <input type="text" id="rm-${i}" placeholder="（可选）记住：为什么这么改，下次照做" style="margin-top:6px;font-size:12px">
-      <div id="ai-${i}" class="hidden" style="margin-top:8px;background:var(--panel-2);padding:10px;border-radius:8px">
-        <input type="text" id="rs-${i}" placeholder="为什么觉得原来不好（可留空）" style="margin-bottom:6px">
-        <input type="text" id="in-${i}" placeholder="想改成什么样，如：更口语 / 点名具体红人玩法 / 别用套话">
-        <div style="margin-top:8px"><button class="primary" onclick="doRevise(${i})">让 AI 重写这段</button>
-          <span class="desc" id="stt-${i}" style="margin-left:8px"></span></div>
-      </div>
-    </div></div>`;
-  }).join('');
+  BLOCKS=j.blocks; CAN_AI=!!j.can_ai;
+  let g=groupBlocks();
+  // 定位摘要（折叠时显示）
+  function subOf(nm){let oid=g.langMap[nm].find(i=>BLOCKS[i].key.indexOf('.one_liner')>=0);
+    return oid!=null?BLOCKS[oid].text:''}
+  let chips=g.langOrder.map((nm,pi)=>`<span class="jchip" onclick="jumpLang(${pi})">${esc(nm)}</span>`).join('');
+  let panels=g.langOrder.map((nm,pi)=>`<div class="card" id="lp-${pi}">
+      <div class="panelhd" onclick="togglePanel(${pi})"><span class="car">▶</span>
+        <span class="nm">${esc(nm)}</span><span class="sub">${esc(subOf(nm))}</span></div>
+      <div class="panelbody hidden" id="pb-${pi}">${g.langMap[nm].map(blockHtml).join('')}</div>
+    </div>`).join('');
   el('genBody').style.textAlign='left';
   el('genBody').innerHTML=`
-    <div class="banner info" style="text-align:left">✏️ <b>可直接改</b>，或点每段「让 AI 改」并说明原因/想要的样子。
-      每次修订都会记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次生成自动照做。</div>
-    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <div class="banner info" style="text-align:left">✏️ <b>可直接改</b>（框会自动变高），或点「让 AI 改」说明想要的样子；
+      下面每个语言是一个板块，点标题展开。每次修订都记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次自动照做。</div>
+    <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap;position:sticky;top:0;background:var(--paper);padding:6px 0;z-index:5">
       <button class="primary" onclick="saveReport()">保存修改</button>
-      ${j.can_ai?`<button class="primary" style="background:#7b4fc0" onclick="polishAll()">✨ 一键润色全文</button>`:''}
+      ${CAN_AI?`<button class="primary" style="background:#7b4fc0" onclick="polishAll()">✨ 一键润色全文</button>`:''}
       <button class="primary" style="background:var(--good)" onclick="downloadDoc()">下载 docx ↓</button>
       <button class="ghost" onclick="backToReview()">← 返回修正命名</button>
       <span class="desc" id="saveState" style="align-self:center"></span>
-    </div>${cards}`;
+    </div>
+    ${section('一、广告部份', g.ad)}
+    ${section('二、缺口分析', g.gap)}
+    ${section('四、素材/脚本维度', g.script)}
+    <div class="sechd">三、KOL 分语言素材分析（点语言展开）</div>
+    <div class="jumpchips">${chips}</div>
+    ${panels}`;
+  // 顶部区块自适应高度
+  document.querySelectorAll('#genBody .sechd ~ .blk textarea, #genBody > .blk textarea').forEach(autoGrow);
+  BLOCKS.forEach((b,i)=>{let t=el('ta-'+i);if(t&&t.offsetParent)autoGrow(t);});
+  if(g.langOrder.length) togglePanel(0);  // 默认展开第一个语言
 }
+function togglePanel(pi){
+  let pb=el('pb-'+pi), hd=el('lp-'+pi).querySelector('.panelhd');
+  let show=pb.classList.contains('hidden');
+  pb.classList.toggle('hidden'); hd.classList.toggle('open',show);
+  if(show) pb.querySelectorAll('textarea').forEach(autoGrow);
+}
+function jumpLang(pi){let pb=el('pb-'+pi);
+  if(pb.classList.contains('hidden')) togglePanel(pi);
+  el('lp-'+pi).scrollIntoView({behavior:'smooth',block:'start'});}
 function toggleAI(i){el('ai-'+i).classList.toggle('hidden');el('in-'+i).focus()}
 async function doRevise(i){
   let key=BLOCKS[i].key, instr=el('in-'+i).value.trim(), reason=el('rs-'+i).value.trim();
@@ -529,7 +588,7 @@ async function doRevise(i){
   el('stt-'+i).innerHTML='<span class="spin"></span> AI 重写中…';
   let jr=await post('/api/revise',{key,instruction:instr,reason});
   if(!jr.ok){el('stt-'+i).textContent=jr.error||'失败';return}
-  el('ta-'+i).value=jr.text; el('ta-'+i).style.height='auto'; el('ta-'+i).style.height=el('ta-'+i).scrollHeight+'px';
+  el('ta-'+i).value=jr.text; autoGrow(el('ta-'+i));
   el('stt-'+i).textContent='已改 + 记进记忆库 ✓'; setTimeout(()=>el('ai-'+i).classList.add('hidden'),900);
 }
 async function saveReport(){
@@ -545,7 +604,7 @@ async function polishAll(){
   let j=await post('/api/polish',{blocks});
   if(!j.ok){el('saveState').textContent=j.error||'润色失败';return}
   BLOCKS=j.blocks;
-  BLOCKS.forEach((b,i)=>{let ta=el('ta-'+i);if(ta){ta.value=b.text;ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,600)+'px';}});
+  BLOCKS.forEach((b,i)=>{let ta=el('ta-'+i);if(ta){ta.value=b.text;if(ta.offsetParent)autoGrow(ta);}});
   el('saveState').textContent='已润色，docx 已更新 ✓';
 }
 
