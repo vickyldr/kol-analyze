@@ -57,6 +57,11 @@ def login():
 
 SESSIONS: dict[str, dict] = {}
 SETTINGS = Settings()
+
+# 产品清单：默认 RM/RC/RO，可在页面自定义添加，存在持久盘，重启不丢
+_PRODUCT_SEED = dict(PRODUCTS)
+PRODUCTS.clear()
+PRODUCTS.update(store.load_products(_PRODUCT_SEED))
 DEFAULT_PRODUCT = next(iter(PRODUCTS))
 
 
@@ -537,6 +542,15 @@ def api_draft_save():
 def api_drafts():
     prod = request.args.get("product") or _S()["product"]
     return jsonify({"product": prod, "drafts": store.list_drafts(prod)})
+
+
+@app.post("/api/product/add")
+def api_product_add():
+    body = request.get_json(force=True)
+    updated = store.add_product(body.get("code", ""), body.get("name", ""), _PRODUCT_SEED)
+    PRODUCTS.clear()
+    PRODUCTS.update(updated)
+    return jsonify({"ok": True, "products": PRODUCTS})
 
 
 @app.get("/api/projects")

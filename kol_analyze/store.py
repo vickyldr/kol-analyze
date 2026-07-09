@@ -41,6 +41,34 @@ def memory_path(product: str) -> Path:
     return product_dir(product) / "memory.json"
 
 
+_PRODUCTS_FILE = ROOT / "products.json"
+
+
+def load_products(defaults: dict) -> dict:
+    """产品清单（可自定义），存在工作区根目录、随持久盘保留。"""
+    if _PRODUCTS_FILE.exists():
+        try:
+            d = json.loads(_PRODUCTS_FILE.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and d:
+                return d
+        except (json.JSONDecodeError, OSError):
+            pass
+    _PRODUCTS_FILE.write_text(json.dumps(defaults, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    return dict(defaults)
+
+
+def add_product(code: str, name: str, defaults: dict) -> dict:
+    code = re.sub(r"[^A-Za-z0-9]", "", str(code)).upper()[:6]
+    if not code:
+        return load_products(defaults)
+    products = load_products(defaults)
+    products[code] = name or code
+    _PRODUCTS_FILE.write_text(json.dumps(products, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    return products
+
+
 def load_staffing(product: str) -> str:
     """读该产品的人力分工文本（每行一人）。"""
     p = product_dir(product) / "staffing.txt"

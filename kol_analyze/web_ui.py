@@ -178,6 +178,7 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
       <h2 style="margin:0;font-size:23px;letter-spacing:.01em">项目</h2>
       <select id="galleryFilter" onchange="renderGallery()" style="width:auto;min-width:130px"></select>
       <div style="flex:1"></div>
+      <button class="ghost" onclick="openProducts()">产品</button>
       <button class="primary" onclick="newProject()">+ 新建复盘</button>
     </div>
     <div id="galleryGrid" class="gallery"></div>
@@ -287,6 +288,22 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
     <button class="ghost" onclick="closeModal()">取消</button>
     <button class="primary" onclick="saveCorrect()">存入记忆库</button>
   </div>
+</div></div>
+
+<!-- products modal -->
+<div class="modal-bg" id="modal3"><div class="modal">
+  <div class="mh">📦 产品线</div>
+  <div class="mb">
+    <div class="desc" style="margin-bottom:8px">每个产品的命名前缀、记忆库、历史、项目都分开。前缀就是广告名开头，如 <code>RM</code>／<code>RC</code>／<code>RO</code>。</div>
+    <div id="productList" style="margin-bottom:14px"></div>
+    <div class="row2">
+      <div><label class="fld">前缀（2-6 位字母/数字）</label><input type="text" id="npCode" placeholder="如 RD"></div>
+      <div><label class="fld">产品名</label><input type="text" id="npName" placeholder="如 Radio"></div>
+    </div>
+    <div style="margin-top:10px"><button class="primary" onclick="addProduct()">添加产品</button>
+      <span class="desc" id="npMsg" style="margin-left:8px"></span></div>
+  </div>
+  <div class="mf"><div class="sp" style="flex:1"></div><button class="ghost" onclick="el('modal3').classList.remove('show')">关闭</button></div>
 </div></div>
 
 <!-- manual market / alias modal -->
@@ -419,6 +436,22 @@ async function openProject(product, id){
 async function delProject(product,id){
   if(!confirm('删除这个项目？（不可恢复）'))return;
   await post('/api/draft/delete',{id,product}); loadGallery();
+}
+function refreshProductSelects(){
+  let ps=el('product');
+  if(ps){let cur=ps.value;ps.innerHTML=Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');if(cur&&PRODUCTS[cur])ps.value=cur;}
+  let f=el('galleryFilter');
+  if(f){let cur=f.value;f.innerHTML='<option value="">全部产品</option>'+Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');f.value=cur;}
+}
+function openProducts(){
+  el('productList').innerHTML=Object.entries(PRODUCTS).map(([k,v])=>`<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><span class="lang">${k}</span><span style="font-size:13px">${v}</span></div>`).join('');
+  el('npMsg').textContent='';el('modal3').classList.add('show');
+}
+async function addProduct(){
+  let code=el('npCode').value.trim(), name=el('npName').value.trim();
+  if(!code){el('npMsg').textContent='请填前缀';return}
+  let j=await post('/api/product/add',{code,name});
+  if(j.ok){PRODUCTS=j.products;el('npCode').value=el('npName').value='';refreshProductSelects();openProducts();el('npMsg').textContent='已添加 ✓';}
 }
 function goGallery(){
   ['view-upload','view-review','view-done'].forEach(v=>el(v).classList.add('hidden'));

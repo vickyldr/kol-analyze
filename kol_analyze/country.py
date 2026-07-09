@@ -9,10 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .config import PRODUCTS
-
-# 命名锚点：产品前缀(RM/RC/RO…) 或 KOL，后跟 2 位语言码
-_ANCHORS = set(PRODUCTS.keys()) | {"KOL"}
+from .config import PRODUCTS  # 运行时会被原地更新（动态添加产品）
 
 # 语言代码 -> 中文语言名（用于 KOL 产出/素材分析）
 LANG_NAME: dict[str, str] = {
@@ -68,11 +65,12 @@ def parse_ad_name(name: str) -> NameParts:
     n = str(name)
     toks = n.split("_")
 
-    # 1) 定位语言锚点：<产品>_<CC>_ 或 KOL_<CC>_（产品含 RM/RC/RO…）
+    # 1) 定位语言锚点：<产品>_<CC>_ 或 KOL_<CC>_（产品动态，含 RM/RC/RO/自定义…）
+    anchors = {p.upper() for p in PRODUCTS} | {"KOL"}
     lang = None
     core = 0  # 语言代码所在的 token 索引
     for i in range(len(toks) - 1):
-        if toks[i].strip().upper() in _ANCHORS and \
+        if toks[i].strip().upper() in anchors and \
                 re.fullmatch(r"[A-Za-z]{2}", toks[i + 1].strip()):
             lang = toks[i + 1].strip().upper()
             core = i + 1
