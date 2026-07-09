@@ -50,9 +50,9 @@ def read_screenshots(image_paths, settings: Settings) -> MarketContext:
             "可在页面里手填大盘数据，或改用 --market market.json。）"])
 
     text = engine.read_images(_SYSTEM, "把这些截图读成约定的 JSON，只输出 JSON。",
-                              paths, settings.vision_model)
+                              paths, settings.vision_model, timeout=150)
     if not text:
-        return MarketContext(notes=["（截图解析失败，已跳过大盘回填。）"])
+        return MarketContext(notes=["截图没读出内容（可能是折线趋势图、无占比数字，或读取超时）——可手填大盘或忽略。"])
     try:
         s, e = text.find("{"), text.rfind("}")
         return from_dict(json.loads(text[s:e + 1]))

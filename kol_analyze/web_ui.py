@@ -395,9 +395,10 @@ document.addEventListener('paste', async e=>{
   if(!imgs.length) return;       // 不是图片就不拦截（比如往输入框粘文字）
   e.preventDefault();
   if(el('view-review') && !el('view-review').classList.contains('hidden')){
-    el('banners').innerHTML='<div class="banner info"><span class="spin"></span> 正在识别粘贴的截图…</div>';
     let fd=new FormData(); imgs.forEach(f=>fd.append('shots',f));
-    SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json(); render();
+    SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json();
+    window.visionRunning=(SNAP.vision==='running');window.visionNote='';render();
+    if(window.visionRunning)pollVision();
   } else {
     imgs.forEach(f=>shotFiles.push(f)); renderShots();
     el('uploadHint').textContent='已粘贴 '+imgs.length+' 张截图（共 '+shotFiles.length+' 张），点「开始分析」。';
@@ -536,7 +537,18 @@ async function analyze(){
     let dp=Object.entries(j.detected_products).map(([k,v])=>k+'×'+v).join('、');
     if(!j.detected_products[j.product])el('uploadHint').textContent='注意：数据里检测到 '+dp+'，与所选产品 '+j.product+' 不一致，请确认。';
   }
+  window.visionRunning=(j.vision==='running'); window.visionNote='';
   showReview();
+  if(window.visionRunning)pollVision();
+}
+function pollVision(){
+  jget('/api/vision/status').then(v=>{
+    if(v.status==='running'){setTimeout(pollVision,3000);return}
+    window.visionRunning=false;
+    if(v.status==='done'&&v.snapshot){SNAP=v.snapshot;}
+    else{window.visionNote=v.note||'截图没读出占比';}
+    if(!el('view-review').classList.contains('hidden'))render();
+  }).catch(()=>{window.visionRunning=false;});
 }
 function showReview(){
   el('view-gallery').classList.add('hidden');
@@ -571,7 +583,8 @@ function renderStrip(){
 }
 function renderBanners(){
   let m=SNAP.missing,h='';
-  if(m.market){h+=`<div class="banner warn"><div>⚠️ <b>还没有大盘数据</b>：截图没上传或没识别到，「覆盖缺口」无法计算。
+  if(window.visionRunning){h+=`<div class="banner info"><div><span class="spin"></span> 正在后台识别大盘截图…（最多约 1 分钟；读不出就用「手填大盘」或直接忽略，不影响生成）</div></div>`}
+  if(m.market&&!window.visionRunning){h+=`<div class="banner warn"><div>⚠️ <b>还没有大盘数据</b>${window.visionNote?'：'+window.visionNote:'：截图没上传或没识别到'}。「覆盖缺口」无法计算（不影响其余分析）。
     <button class="ghost" style="margin-left:8px" onclick="supplementShots()">补传截图</button>
     <button class="ghost" onclick="openMarketForm()">手填大盘</button></div></div>`}
   if(m.incomplete_langs&&m.incomplete_langs.length&&!m.force_complete&&!window._dismissInc){
@@ -669,8 +682,9 @@ function supplementData(){let i=document.createElement('input');i.type='file';i.
     SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json();render()};i.click()}
 function supplementShots(){let i=document.createElement('input');i.type='file';i.multiple=true;i.accept='image/*';
   i.onchange=async()=>{let fd=new FormData();for(const f of i.files)fd.append('shots',f);
-    el('banners').innerHTML='<div class="banner info"><span class="spin"></span> 正在识别截图…</div>';
-    SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json();render()};i.click()}
+    SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json();
+    window.visionRunning=(SNAP.vision==='running');window.visionNote='';render();
+    if(window.visionRunning)pollVision();};i.click()}
 function openMarketForm(){el('modal4').classList.add('show');
   if(SNAP&&SNAP.missing) el('mkBox').focus();}
 async function submitMarket(){

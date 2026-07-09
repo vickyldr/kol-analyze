@@ -180,6 +180,31 @@ def _snapshot(st: dict) -> dict:
     }
 
 
+def _start_vision(st: dict, shots: list):
+    """后台识别大盘截图，读到就更新 market 并重算，不阻塞页面。"""
+    st["vision"] = {"status": "running"}
+
+    def worker(state):
+        try:
+            mkt = vision.read_screenshots(shots, SETTINGS)
+            if not mkt.is_empty():
+                state["market"] = mkt
+                snap = _recompute(state)
+                state["vision"] = {"status": "done", "snapshot": snap}
+            else:
+                state["vision"] = {"status": "empty",
+                                   "note": "；".join(mkt.notes) or "没读出占比"}
+        except Exception as e:  # noqa
+            state["vision"] = {"status": "failed", "note": str(e)}
+
+    threading.Thread(target=worker, args=(st,), daemon=True).start()
+
+
+@app.get("/api/vision/status")
+def api_vision_status():
+    return jsonify(_S().get("vision", {"status": "idle"}))
+
+
 def _missing(st: dict) -> dict:
     mkt = st["market"]
     inc = [l.name for l in st["analysis"].langs if l.lang in st.get("incomplete", set())]
@@ -228,12 +253,13 @@ def api_analyze():
             p = wd / "shots" / Path(f.filename).name
             f.save(p)
             shots.append(str(p))
-    if shots:
-        st["market"] = vision.read_screenshots(shots, SETTINGS)
     st["project_id"] = None  # 新上传 = 新项目
     snap = _recompute(st)
     if snap.get("ok"):
         _save_project(st, status="draft", with_files=True)
+    if shots:
+        _start_vision(st, shots)
+        snap["vision"] = "running"
     return jsonify(snap)
 
 
@@ -250,11 +276,11 @@ def api_supplement():
             p = wd / "shots" / Path(f.filename).name
             f.save(p)
             shots.append(str(p))
+    snap = _recompute(st)
     if shots:
-        newmkt = vision.read_screenshots(shots, SETTINGS)
-        if not newmkt.is_empty():
-            st["market"] = newmkt
-    return jsonify(_recompute(st))
+        _start_vision(st, shots)
+        snap["vision"] = "running"
+    return jsonify(snap)
 
 
 @app.post("/api/market")
