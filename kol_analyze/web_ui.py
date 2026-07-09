@@ -228,6 +228,14 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
     <div id="banners"></div>
     <div class="card"><div class="bd">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div class="eyebrow">SOP</div><h3 style="margin:0">分析规则 / 复盘 SOP（本产品）</h3>
+        <div class="sp" style="flex:1"></div>
+        <button class="ghost" onclick="saveSop()">保存规则</button></div>
+      <div class="desc" style="margin-bottom:6px">把你飞书里的「素材复盘 SOP」（分档标准：消耗/ROI 阈值、iOS/Android 口径；对应动作：放大/复刻/优化/观察/停止）<b>粘进来</b>。生成时 Claude 会<b>严格按它</b>给素材分类和动作。按产品分开保存，一次填好长期用。</div>
+      <textarea id="sopBox" class="grow" style="width:100%;min-height:90px" placeholder="例：优质标准 7天消耗≥300刀、iOS ROI0≥70% / Android≥60%；分类表：高消耗≥300 且达标=优质素材（放大/复刻）…"></textarea>
+    </div></div>
+    <div class="card"><div class="bd">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <div class="eyebrow">Staffing</div><h3 style="margin:0">人力分工（可选）</h3>
         <div class="sp" style="flex:1"></div>
         <button class="ghost" onclick="saveStaffing()">保存分工</button></div>
@@ -522,11 +530,17 @@ function showReview(){
   render();
 }
 function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight();
-  let sb=el('staffingBox'); if(sb&&!sb.value&&SNAP.staffing){sb.value=SNAP.staffing;if(window.autoGrow)autoGrow(sb);}}
+  let sb=el('staffingBox'); if(sb&&!sb.value&&SNAP.staffing){sb.value=SNAP.staffing;if(window.autoGrow)autoGrow(sb);}
+  let op=el('sopBox'); if(op&&!op.value&&SNAP.sop){op.value=SNAP.sop;if(window.autoGrow)autoGrow(op);}}
 async function saveStaffing(){
   let j=await post('/api/staffing',{text:el('staffingBox').value});
   if(j&&j.stats){SNAP=j;render();}
   alert('✓ 分工已保存。点「生成复盘 docx」后，文档里会多出「五、人力分工与调整建议」，给每个人加/减/补的动作。');
+}
+async function saveSop(){
+  let j=await post('/api/sop',{text:el('sopBox').value});
+  if(j&&j.stats){SNAP=j;render();}
+  alert('✓ 分析规则/SOP 已保存（按本产品）。之后生成时会严格按它给素材分类和动作。');
 }
 function renderStrip(){
   let s=SNAP.stats;

@@ -25,6 +25,7 @@ _C_ROI0 = ["roi0（归因）", "roi0"]
 _C_CONV = ["安装7日内试用&付费设备数", "安装当日试用&付费设备数", "转化设备数"]
 _C_CTR = ["点击率(全部)(爬虫)", "点击率", "ctr"]
 _C_FUNC = ["功能点", "玩法功能"]
+_C_PLATFORM = ["平台（platform）", "平台(platform)", "平台", "platform"]
 
 
 @dataclass
@@ -39,6 +40,7 @@ class CreativeRow:
     converted: bool = False         # 是否有转化
     conv_devices: float = 0.0
     ctr: float | None = None
+    platform: str | None = None     # iOS / Android
 
 
 @dataclass
@@ -129,6 +131,7 @@ def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
     c_roi0 = _find_col(kol_df, _C_ROI0)
     c_conv = _find_col(kol_df, _C_CONV)
     c_ctr = _find_col(kol_df, _C_CTR)
+    c_plat = _find_col(kol_df, _C_PLATFORM)
 
     groups: dict[str, LangGroup] = {}
     total_spend = 0.0
@@ -155,6 +158,7 @@ def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
             converted=conv_dev > 0,
             conv_devices=conv_dev,
             ctr=_to_float(r.get(c_ctr)) if c_ctr else None,
+            platform=(str(r.get(c_plat)).strip() if c_plat else None),
         )
         g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(lang)))
         g.rows.append(row)

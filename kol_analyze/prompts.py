@@ -91,7 +91,9 @@ def build_facts(analysis) -> dict:
             "top玩法": [f"{p}×{c}" for p, c in l.top_plays[:5]],
             "强素材": [
                 {"素材": c.ad_name, "红人": c.influencer, "玩法": c.play,
-                 "ROI7%": round((c.roi7 or 0) * 100, 1), "消耗": round(c.spend, 1)}
+                 "ROI0%": round((c.roi0 or 0) * 100, 1),
+                 "ROI7%": round((c.roi7 or 0) * 100, 1),
+                 "平台": c.platform, "消耗": round(c.spend, 1)}
                 for c in l.strong[:8]],
             "潜力素材": [f"{c.influencer}·{c.play}" for c in l.potential[:6]],
             "弱素材": [f"{c.influencer}·{c.play}" for c in l.weak[:5]],
@@ -116,6 +118,18 @@ def build_facts(analysis) -> dict:
     }
 
 
+def sop_block(sop: str) -> str:
+    """本产品的复盘 SOP / 分析规则；提供了就作为最高优先级的判断标准。"""
+    sop = (sop or "").strip()
+    if not sop:
+        return ""
+    return ("【本产品复盘 SOP · 分析规则（最高优先级，务必严格照做）】\n"
+            "下面是本产品团队的素材复盘 SOP：素材分类标准（消耗/ROI 阈值、iOS/Android 口径）"
+            "与对应动作（放大/复刻/优化/观察/停止等）。请严格用它来判断每条素材属于哪一档、"
+            "给出对应动作，分类名与动作名都沿用 SOP 里的说法，不要用你自己的一套。\n"
+            "----- SOP 开始 -----\n" + sop + "\n----- SOP 结束 -----\n")
+
+
 def style_block(mem) -> str:
     """把历史「写作偏好」渲染成注入文本；没有就返回空。"""
     notes = getattr(mem, "style_notes", None) or []
@@ -136,6 +150,7 @@ USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产
 标题用：{title}
 周期用：{period}
 
+{sop}
 {style}
 严格按此结构输出（键名一致）：
 {schema}

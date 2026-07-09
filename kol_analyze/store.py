@@ -79,6 +79,16 @@ def save_staffing(product: str, text: str) -> None:
     (product_dir(product) / "staffing.txt").write_text(text or "", encoding="utf-8")
 
 
+def load_sop(product: str) -> str:
+    """读该产品的复盘 SOP / 分析规则（分档标准与动作）。"""
+    p = product_dir(product) / "sop.txt"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def save_sop(product: str, text: str) -> None:
+    (product_dir(product) / "sop.txt").write_text(text or "", encoding="utf-8")
+
+
 def session_dir(product: str, sid: str) -> Path:
     d = product_dir(product) / "sessions" / sid
     (d / "data").mkdir(parents=True, exist_ok=True)

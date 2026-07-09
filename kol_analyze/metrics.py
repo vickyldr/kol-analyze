@@ -24,6 +24,8 @@ class CreativeAgg:
     conv_devices: float
     tier: str                # strong / potential / weak
     spend_share_in_lang: float
+    roi0: float | None = None       # 小数
+    platform: str | None = None     # iOS / Android
 
 
 @dataclass
@@ -87,8 +89,8 @@ def _tier(roi7: float | None, converted: bool, share: float,
 def _lang_metrics(g: LangGroup, th: Thresholds) -> LangMetrics:
     # 去重：同 ad_name 合并（同素材可能投多个广告组）
     agg: dict[str, dict] = defaultdict(
-        lambda: {"spend": 0.0, "roi7": None, "conv": 0.0,
-                 "influencer": None, "play": None})
+        lambda: {"spend": 0.0, "roi7": None, "roi0": None, "conv": 0.0,
+                 "influencer": None, "play": None, "platform": None})
     conv_names, all_names = set(), set()
     infl_counter: dict[str, int] = defaultdict(int)
     play_counter: dict[str, int] = defaultdict(int)
@@ -99,9 +101,12 @@ def _lang_metrics(g: LangGroup, th: Thresholds) -> LangMetrics:
         a["spend"] += r.spend
         if r.roi7 is not None:
             a["roi7"] = max(a["roi7"] or 0.0, r.roi7)
+        if r.roi0 is not None:
+            a["roi0"] = max(a["roi0"] or 0.0, r.roi0)
         a["conv"] += r.conv_devices
         a["influencer"] = a["influencer"] or r.influencer
         a["play"] = a["play"] or r.play
+        a["platform"] = a["platform"] or r.platform
         all_names.add(r.ad_name)
         if r.converted:
             conv_names.add(r.ad_name)
@@ -123,6 +128,7 @@ def _lang_metrics(g: LangGroup, th: Thresholds) -> LangMetrics:
             spend=a["spend"], roi7=a["roi7"], conv_devices=a["conv"],
             tier=_tier(a["roi7"], name in conv_names, share, th),
             spend_share_in_lang=share,
+            roi0=a["roi0"], platform=a["platform"],
         ))
     creatives.sort(key=lambda c: c.spend, reverse=True)
 

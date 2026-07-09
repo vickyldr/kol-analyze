@@ -24,7 +24,8 @@ def _extract_json(text: str) -> dict:
 
 
 def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
-            title: str, period: str, mem=None, staffing_facts: dict | None = None) -> dict:
+            title: str, period: str, mem=None, staffing_facts: dict | None = None,
+            sop: str = "") -> dict:
     staffing_facts = staffing_facts or {"has_staffing": False, "people": []}
     if engine.available() == "offline":
         if not settings.allow_offline_fallback:
@@ -33,7 +34,8 @@ def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
         return _offline(analysis, scripts, settings.thresholds, title, period, staffing_facts)
 
     user = prompts.USER_TEMPLATE.format(
-        title=title, period=period, style=prompts.style_block(mem),
+        title=title, period=period, sop=prompts.sop_block(sop),
+        style=prompts.style_block(mem),
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
         facts=json.dumps(prompts.build_facts(analysis), ensure_ascii=False, indent=2),
         script_facts=json.dumps(prompts.build_script_facts(scripts),
