@@ -72,8 +72,11 @@ def build_facts(text: str, gaps, strategies) -> dict:
                 assigned.add(ln)
                 g = gap_by.get(ln)
                 s = strat_by.get(ln)
+                share = g.kol_spend_share if (g and g.kol_spend_share is not None) else 0
+                important = share >= 8 or (g and g.verdict in ("加量", "削减"))
                 langs.append({
                     "语言": ln,
+                    "重要度": "重要" if important else "次要",
                     "档位": g.verdict if g else "无数据",
                     "结论": g.one_line if g else None,
                     "消耗占比%": round(g.kol_spend_share, 2) if g and g.kol_spend_share is not None else None,

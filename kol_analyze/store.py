@@ -167,7 +167,7 @@ def save_draft(product: str, created: str, meta: dict, market_dict: dict,
                data: dict | None, src_data_dir: Path, did: str | None = None,
                status: str | None = None, stats: dict | None = None,
                staffing: str = "", copy_files: bool = True,
-               docx_path: Path | None = None) -> str:
+               docx_path: Path | None = None, extra: str = "") -> str:
     """新建或更新一个「项目」（草稿/已完成）。did 传了就 upsert 到同一项目。"""
     if not did:
         did = f"{re.sub(r'[^0-9A-Za-z-]', '', created) or 'proj'}-{uuid.uuid4().hex[:4]}"
@@ -186,7 +186,7 @@ def save_draft(product: str, created: str, meta: dict, market_dict: dict,
         "id": did, "product": product,
         "created": prev.get("created", created), "updated": created,
         "meta": meta, "market": market_dict, "data": data,
-        "staffing": staffing,
+        "staffing": staffing, "extra": extra,
         "status": status or ("completed" if data else "draft"),
         "stats": stats if stats is not None else prev.get("stats", {}),
     }

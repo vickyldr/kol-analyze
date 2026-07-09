@@ -234,8 +234,18 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
     <div id="banners"></div>
     <div class="card"><div class="bd">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div class="eyebrow">Notes</div><h3 style="margin:0">本期补充说明 / 额外要求（可选）</h3>
+        <div class="sp" style="flex:1"></div>
+        <button class="ghost" onclick="saveExtra()">保存说明</button></div>
+      <div class="desc" style="margin-bottom:6px">本期的额外背景 / 硬要求写这里：领导要新做或必须做的国家、要砍的国家、广告侧硬要投的方向、某脚本命名纠正……生成时会当成<b>硬约束</b>纳入分析、缺口、人力和 todo。</div>
+      <textarea id="extraBox" class="grow" style="width:100%;min-height:70px" placeholder="例：下季度领导要求新做 德国、法国；日本本月起减量；广告侧坚持要投泰国需补 KOL；『拉踩会议录音』命名写错了应算 拉踩GPT。"></textarea>
+    </div></div>
+    <div class="card"><div class="bd">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <div class="eyebrow">SOP</div><h3 style="margin:0">分析规则 / 复盘 SOP（本产品）</h3>
         <div class="sp" style="flex:1"></div>
+        <button class="ghost" onclick="document.getElementById('sopFile').click()">上传文档</button>
+        <input id="sopFile" type="file" accept=".docx,.txt,.md" class="hidden" onchange="uploadSop(this)">
         <button class="ghost" onclick="saveSop()">保存规则</button></div>
       <div class="desc" style="margin-bottom:6px">把你飞书里的「素材复盘 SOP」（分档标准：消耗/ROI 阈值、iOS/Android 口径；对应动作：放大/复刻/优化/观察/停止）<b>粘进来</b>。生成时 Claude 会<b>严格按它</b>给素材分类和动作。按产品分开保存，一次填好长期用。</div>
       <textarea id="sopBox" class="grow" style="width:100%;min-height:90px" placeholder="例：优质标准 7天消耗≥300刀、iOS ROI0≥70% / Android≥60%；分类表：高消耗≥300 且达标=优质素材（放大/复刻）…"></textarea>
@@ -513,10 +523,12 @@ async function delDraft(id){
 }
 function goUpload(){el('view-gallery').classList.add('hidden');el('view-review').classList.add('hidden');el('view-done').classList.add('hidden');
   el('view-upload').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
-  el('st1').className='step active';el('st2').className=SNAP?'step done':'step';el('st3').className=window.hasReport?'step done':'step';}
+  el('st1').className='step active';el('st2').className=SNAP?'step done':'step';el('st3').className=window.hasReport?'step done':'step';
+  if(SNAP)el('uploadHint').textContent='本项目数据已加载在服务器上。要补充/替换数据就选文件后点「开始分析」（会累加）；不改数据直接点第 2/3 步即可。';}
 function goReviewStep(){if(!SNAP){return}el('view-gallery').classList.add('hidden');el('view-upload').classList.add('hidden');el('view-done').classList.add('hidden');
   el('view-review').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
-  el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';}
+  el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';
+  render();}
 function goEditorStep(){if(!window.hasReport){if(SNAP)alert('请先在第 2 步点「生成复盘 docx」');return}gotoEditor();}
 function gotoEditor(){el('view-gallery').classList.add('hidden');el('view-upload').classList.add('hidden');el('view-review').classList.add('hidden');
   el('view-done').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
@@ -562,7 +574,16 @@ function showReview(){
 }
 function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight();
   let sb=el('staffingBox'); if(sb&&!sb.value&&SNAP.staffing){sb.value=SNAP.staffing;if(window.autoGrow)autoGrow(sb);}
-  let op=el('sopBox'); if(op&&!op.value&&SNAP.sop){op.value=SNAP.sop;if(window.autoGrow)autoGrow(op);}}
+  let op=el('sopBox'); if(op&&!op.value&&SNAP.sop){op.value=SNAP.sop;if(window.autoGrow)autoGrow(op);}
+  let ex=el('extraBox'); if(ex&&!ex.value&&SNAP.extra){ex.value=SNAP.extra;if(window.autoGrow)autoGrow(ex);}}
+async function saveExtra(){await post('/api/extra',{text:el('extraBox').value});alert('✓ 本期补充说明已保存，生成时会作为硬约束纳入分析。');}
+async function uploadSop(inp){
+  if(!inp.files||!inp.files[0])return;
+  let fd=new FormData();fd.append('file',inp.files[0]);inp.value='';
+  let r=await fetch('/api/sop/upload',{method:'POST',body:fd});let j=await r.json();
+  if(j.ok){el('sopBox').value=j.text;if(window.autoGrow)autoGrow(el('sopBox'));alert('✓ 已从文档读入 SOP（已保存）。');}
+  else alert(j.error||'读取失败');
+}
 async function saveStaffing(){
   let j=await post('/api/staffing',{text:el('staffingBox').value});
   if(j&&j.stats){SNAP=j;render();}

@@ -102,7 +102,7 @@ def _save_project(st: dict, status=None, with_files=False, with_docx=False) -> s
         st["product"], _now(), st.get("meta", {}), market.to_dict(st["market"]),
         st.get("data"), _wd(st) / "data", did=st.get("project_id"),
         status=status, stats=stats, staffing=st.get("staffing", ""),
-        copy_files=with_files, docx_path=docx)
+        extra=st.get("extra", ""), copy_files=with_files, docx_path=docx)
     st["project_id"] = pid
     return pid
 
@@ -177,6 +177,7 @@ def _snapshot(st: dict) -> dict:
         "memory": memory.to_dict(mem), "missing": _missing(st),
         "notes": st["market"].notes, "history": _history_list(st["product"]),
         "staffing": st.get("staffing", ""), "sop": st.get("sop", ""),
+        "extra": st.get("extra", ""),
     }
 
 
@@ -320,6 +321,48 @@ def api_sop_set():
     return jsonify(_recompute(st) if "analysis" in st else {"ok": True})
 
 
+@app.post("/api/sop/upload")
+def api_sop_upload():
+    """上传 SOP 文档（docx/txt/md），抽取文字存为本产品 SOP。"""
+    st = _S()
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "没有文件"})
+    text = _extract_doc_text(f)
+    if not text:
+        return jsonify({"ok": False, "error": "没读到文字（支持 .docx/.txt/.md）"})
+    store.save_sop(st["product"], text)
+    st["sop"] = text
+    return jsonify({"ok": True, "text": text})
+
+
+def _extract_doc_text(f) -> str:
+    name = (f.filename or "").lower()
+    if name.endswith((".txt", ".md", ".csv")):
+        return f.read().decode("utf-8", errors="ignore")
+    if name.endswith(".docx"):
+        try:
+            import docx
+            d = docx.Document(f)
+            parts = [p.text for p in d.paragraphs if p.text.strip()]
+            for t in d.tables:
+                for row in t.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            return "\n".join(parts)
+        except Exception:
+            return ""
+    return ""
+
+
+@app.post("/api/extra")
+def api_extra():
+    st = _S()
+    st["extra"] = (request.get_json(silent=True) or {}).get("text", "")
+    return jsonify({"ok": True})
+
+
 @app.post("/api/complete")
 def api_complete():
     """用户确认「这些语言本月就是没怎么投放，数据是完整的」-> 按真实情况判定。"""
@@ -365,7 +408,7 @@ def api_generate():
             data = analyzer.analyze(state["analysis"], state["sa"], SETTINGS,
                                     state["meta"]["title"], state["meta"]["period"],
                                     mem=state.get("mem"), staffing_facts=sf,
-                                    sop=state.get("sop", ""))
+                                    sop=state.get("sop", ""), extra=state.get("extra", ""))
             out = _wd(state) / "复盘.docx"
             docx_writer.render(data, state["analysis"], state["sa"], out)
             created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
@@ -636,6 +679,7 @@ def api_draft_resume():
     st["project_id"] = dr.get("id")  # 续改同一项目，不新建
     st["meta"] = dr.get("meta", {})
     st["market"] = market.from_dict(dr.get("market", {}))
+    st["extra"] = dr.get("extra", "")
     if dr.get("staffing"):
         store.save_staffing(prod, dr["staffing"])
     st["force_complete"] = False
