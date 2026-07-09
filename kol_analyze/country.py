@@ -37,10 +37,20 @@ COUNTRY_TO_LANG: dict[str, str] = {
 }
 
 
+# 语言 -> 括号里补一个代表国家，减少「英语=美国」这类困惑
+_LANG_COUNTRY = {
+    "US": "美国", "TW": "台湾", "BR": "巴西", "KR": "韩国", "JP": "日本",
+    "IT": "意大利", "DE": "德国", "FR": "法国",
+}
+
+
 def lang_name(code: str | None) -> str:
     if not code:
         return "其他"
-    return LANG_NAME.get(code.upper(), code.upper())
+    c = code.upper()
+    base = LANG_NAME.get(c, c)
+    hint = _LANG_COUNTRY.get(c)
+    return f"{base}（{hint}）" if hint and hint != base else base
 
 
 def country_lang(country: str) -> str | None:

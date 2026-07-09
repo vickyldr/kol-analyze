@@ -185,7 +185,7 @@ def _offline(a: Analysis, sa: ScriptAnalysis, th: Thresholds,
     cut = [g.name for g in a.gaps if g.verdict in ("削减", "减少")]
     gap = a.coverage_gaps + [g.name for g in a.gaps
                              if g.verdict == "覆盖缺口" and g.name not in
-                             [x.split("（")[0] for x in a.coverage_gaps]]
+                             [x.rsplit("（大盘", 1)[0] for x in a.coverage_gaps]]
     hi = [g.name for g in a.gaps if g.verdict == "高潜"]
 
     pending = [g.name for g in a.gaps if g.verdict == "待补全"]

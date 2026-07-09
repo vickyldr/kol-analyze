@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from .country import LANG_NAME
+from .country import LANG_NAME, lang_name
 
 # 分工表里常见简写 -> 语言代码
 _REGION_ALIAS = {
@@ -36,7 +36,7 @@ def resolve_region(region: str) -> str | None:
     r = str(region).strip()
     code = _REGION_ALIAS.get(r) or _REGION_ALIAS.get(r.lower())
     if code:
-        return LANG_NAME.get(code, code)
+        return lang_name(code)
     return None
 
 
