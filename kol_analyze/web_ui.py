@@ -64,7 +64,8 @@ button{font-family:inherit}
 .primary{border:none;background:var(--accent);color:#fff;padding:9px 17px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--shadow)}
 .primary:disabled{opacity:.5;cursor:default}
 .steps{display:flex;gap:8px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
-.step{display:flex;align-items:center;gap:9px;padding:8px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:13px;color:var(--ink-3)}
+.step{display:flex;align-items:center;gap:9px;padding:8px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:13px;color:var(--ink-3);cursor:pointer}
+.step:hover{border-color:var(--accent)}
 .step .dot{width:20px;height:20px;border-radius:50%;background:var(--panel-2);color:var(--ink-3);display:grid;place-items:center;font-size:11px;font-weight:700;border:1px solid var(--line)}
 .step.done{color:var(--ink-2)}.step.done .dot{background:var(--good-bg);color:var(--good);border-color:transparent}
 .step.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
@@ -145,14 +146,15 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
     <div class="brand"><div class="logo">复</div><div>KOL 月度复盘分析<small id="engineLabel">本地 · 引擎检测中…</small></div></div>
     <div class="sp"></div>
     <button class="ghost" onclick="toggleTheme()">切换主题</button>
+    <button class="ghost" id="draftBtn" onclick="saveDraft()" style="display:none">💾 保存草稿</button>
     <button class="primary" id="genBtn" onclick="generate()" disabled>生成复盘 docx ↓</button>
   </div>
   <div class="steps">
-    <div class="step active" id="st1"><span class="dot">1</span> 上传数据 + 大盘截图</div>
+    <div class="step active" id="st1" onclick="goUpload()"><span class="dot">1</span> 上传数据 + 大盘截图</div>
     <span class="arw">→</span>
-    <div class="step" id="st2"><span class="dot">2</span> 审阅并修正命名</div>
+    <div class="step" id="st2" onclick="goReviewStep()"><span class="dot">2</span> 审阅并修正命名</div>
     <span class="arw">→</span>
-    <div class="step" id="st3"><span class="dot">3</span> 生成复盘文档</div>
+    <div class="step" id="st3" onclick="goEditorStep()"><span class="dot">3</span> 生成复盘文档</div>
   </div>
 
   <!-- STEP 1: upload -->
@@ -161,7 +163,7 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
       <div class="eyebrow">Step 1</div><h3 style="margin:4px 0 12px">上传本期数据</h3>
       <div class="row2" style="margin-bottom:14px">
         <div><label class="fld">产品线（命名前缀 RM/RC/RO …记忆库与历史按产品分开）</label>
-          <select id="product" onchange="loadHistory()"></select>
+          <select id="product" onchange="loadHistory();loadDrafts()"></select>
           <div class="desc" id="prodHint" style="margin-top:5px"></div></div>
         <div></div>
       </div>
@@ -188,6 +190,11 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
         <button class="primary" onclick="analyze()">开始分析 →</button>
         <span class="desc" id="uploadHint">大盘截图可留空，之后在页面里手填或补传。</span>
       </div>
+    </div></div>
+    <div class="card" id="draftsCard" style="display:none"><div class="bd">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div class="eyebrow">Draft</div><h3 style="margin:0">草稿 · 继续上次未完成的</h3></div>
+      <div id="draftsList"></div>
     </div></div>
     <div class="card" id="historyCard" style="display:none"><div class="bd">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -342,6 +349,47 @@ async function loadHistory(){
     <span class="sp" style="flex:1"></span>
     <a class="ghost" style="text-decoration:none" href="/api/history/download?product=${encodeURIComponent(prod)}&id=${encodeURIComponent(e.id)}">下载 ↓</a></div>`).join('');
 }
+async function loadDrafts(){
+  let prod=el('product').value;
+  let j=await jget('/api/drafts?product='+encodeURIComponent(prod));
+  let d=j.drafts||[];
+  el('draftsCard').style.display=d.length?'block':'none';
+  el('draftsList').innerHTML=d.map(e=>`<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)">
+    <span class="lang">${(e.meta&&e.meta.period)||'草稿'}</span>
+    <span style="font-size:12.5px">${(e.meta&&e.meta.title)||''}</span>
+    <span class="desc">${e.created} · ${e.has_data?'已生成可续改':'仅数据'}</span>
+    <span style="flex:1"></span>
+    <button class="primary" style="padding:5px 12px" onclick="resumeDraft('${e.id}')">继续编辑</button>
+    <button class="ghost" onclick="delDraft('${e.id}')">删除</button></div>`).join('');
+}
+async function saveDraft(){
+  if(window.hasReport){await saveReport();}
+  let j=await post('/api/draft/save',{});
+  let msg=j.ok?'✓ 草稿已保存，下次在上传页「草稿」里点「继续编辑」':(j.error||'保存失败');
+  let s=el('saveState'); if(s){s.textContent=msg;} else {alert(msg);}
+}
+async function resumeDraft(id){
+  let j=await post('/api/draft/resume',{id,product:el('product').value});
+  if(!j.ok){alert(j.error||'恢复失败');return}
+  SNAP=j; el('draftBtn').style.display='inline-block';
+  if(j.has_data){ gotoEditor(); } else { showReview(); }
+}
+async function delDraft(id){
+  if(!confirm('删除这个草稿？'))return;
+  let j=await post('/api/draft/delete',{id}); loadDrafts();
+}
+function goUpload(){el('view-review').classList.add('hidden');el('view-done').classList.add('hidden');
+  el('view-upload').classList.remove('hidden');
+  el('st1').className='step active';el('st2').className=SNAP?'step done':'step';el('st3').className=window.hasReport?'step done':'step';
+  loadHistory();loadDrafts();}
+function goReviewStep(){if(!SNAP){return}el('view-upload').classList.add('hidden');el('view-done').classList.add('hidden');
+  el('view-review').classList.remove('hidden');
+  el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';}
+function goEditorStep(){if(!window.hasReport){if(SNAP)alert('请先在第 2 步点「生成复盘 docx」');return}gotoEditor();}
+function gotoEditor(){el('view-upload').classList.add('hidden');el('view-review').classList.add('hidden');
+  el('view-done').classList.remove('hidden');
+  el('st1').className='step done';el('st2').className='step done';el('st3').className='step active';
+  el('genBtn').disabled=false;el('draftBtn').style.display='inline-block';renderEditor();}
 async function analyze(){
   if(!dataFiles.length){alert('请先选择后台导出的 xlsx');return}
   el('uploadHint').innerHTML='<span class="spin"></span> 正在分析'+(shotFiles.length?'并识别截图':'')+'…';
@@ -363,8 +411,8 @@ function showReview(){
   el('view-upload').classList.add('hidden');
   el('view-review').classList.remove('hidden');
   el('view-done').classList.add('hidden');
-  el('st1').className='step done';el('st2').className='step active';el('st3').className='step';
-  el('genBtn').disabled=false;
+  el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';
+  el('genBtn').disabled=false;el('draftBtn').style.display='inline-block';
   render();
 }
 function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight()}
@@ -539,7 +587,7 @@ function section(title, idxs){
 }
 async function renderEditor(){
   let j=await jget('/api/report'); if(!j.ok){el('genBody').innerHTML=j.error||'无结果';return}
-  BLOCKS=j.blocks; CAN_AI=!!j.can_ai;
+  BLOCKS=j.blocks; CAN_AI=!!j.can_ai; window.hasReport=true; el('draftBtn').style.display='inline-block';
   let g=groupBlocks();
   // 定位摘要（折叠时显示）
   function subOf(nm){let oid=g.langMap[nm].find(i=>BLOCKS[i].key.indexOf('.one_liner')>=0);
@@ -553,7 +601,8 @@ async function renderEditor(){
   el('genBody').style.textAlign='left';
   el('genBody').innerHTML=`
     <div class="banner info" style="text-align:left">✏️ <b>可直接改</b>（框会自动变高），或点「让 AI 改」说明想要的样子；
-      下面每个语言是一个板块，点标题展开。每次修订都记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次自动照做。</div>
+      下面每个语言是一个板块，点标题展开。每次修订都记进 <b>${(SNAP&&SNAP.product_name)||'该产品'}</b> 的记忆库，下次自动照做。
+      <span class="desc">· 本次已归档进历史（上传页「历史复盘」可查看/重下），也可点「💾 保存草稿」随时回来改。</span></div>
     <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap;position:sticky;top:0;background:var(--paper);padding:6px 0;z-index:5">
       <button class="primary" onclick="saveReport()">保存修改</button>
       ${CAN_AI?`<button class="primary" style="background:#7b4fc0" onclick="polishAll()">✨ 一键润色全文</button>`:''}
@@ -616,7 +665,7 @@ let SNAP_ENGINE='Claude';
     PRODUCTS=e.products||{};
     el('product').innerHTML=Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');
     el('prodHint').textContent='命名前缀 '+Object.keys(PRODUCTS).join(' / ')+' 都能识别；记忆库与历史按此产品分开保存。';
-    loadHistory();
+    loadHistory();loadDrafts();
   }catch(_){el('engineLabel').textContent='本地'}
 })();
 </script>

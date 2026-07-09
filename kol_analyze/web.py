@@ -471,6 +471,64 @@ def api_download():
                      download_name=f"{title}_{period or '复盘'}.docx")
 
 
+@app.post("/api/draft/save")
+def api_draft_save():
+    """保存草稿：上传的文件 + 大盘 + 标题周期 +（若已生成）当前编辑内容。"""
+    st = _S()
+    if "analysis" not in st:
+        return jsonify({"ok": False, "error": "先上传并分析后再存草稿。"})
+    created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
+    did = store.save_draft(st["product"], created, st.get("meta", {}),
+                           market.to_dict(st["market"]), st.get("data"),
+                           _wd(st) / "data")
+    return jsonify({"ok": True, "id": did})
+
+
+@app.get("/api/drafts")
+def api_drafts():
+    prod = request.args.get("product") or _S()["product"]
+    return jsonify({"product": prod, "drafts": store.list_drafts(prod)})
+
+
+@app.post("/api/draft/delete")
+def api_draft_delete():
+    st = _S()
+    store.delete_draft(st["product"], (request.get_json(silent=True) or {}).get("id", ""))
+    return jsonify({"ok": True, "drafts": store.list_drafts(st["product"])})
+
+
+@app.post("/api/draft/resume")
+def api_draft_resume():
+    st = _S()
+    body = request.get_json(force=True)
+    prod = body.get("product") or st["product"]
+    dr = store.get_draft(prod, body.get("id", ""))
+    if not dr:
+        return jsonify({"ok": False, "error": "草稿不存在。"})
+    st["product"] = prod
+    st["meta"] = dr.get("meta", {})
+    st["market"] = market.from_dict(dr.get("market", {}))
+    st["force_complete"] = False
+    # 把草稿文件复制进本会话数据目录（先清空）
+    ddir = _wd(st) / "data"
+    for f in ddir.iterdir():
+        if f.is_file():
+            f.unlink()
+    src = dr.get("_data_dir")
+    if src and src.exists():
+        import shutil as _sh
+        for f in src.iterdir():
+            if f.is_file():
+                _sh.copy(f, ddir / f.name)
+    snap = _recompute(st)
+    has_data = bool(dr.get("data"))
+    if has_data:
+        st["data"] = dr["data"]
+        st["gen"] = {"status": "done"}
+        _rerender(st)
+    return jsonify({"ok": True, "has_data": has_data, **snap})
+
+
 @app.get("/api/history")
 def api_history():
     prod = request.args.get("product") or _S()["product"]

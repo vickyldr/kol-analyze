@@ -88,28 +88,40 @@ def _to_float(v) -> float | None:
 # 后台标准导出
 # --------------------------------------------------------------------------
 
-def _is_backend_export(sheets: dict[str, pd.DataFrame]) -> bool:
-    for df in sheets.values():
+def _is_backend_export(pairs: list[tuple[str, pd.DataFrame]]) -> bool:
+    for _, df in pairs:
         if _find_col(df, _C_ADNAME) and _find_col(df, _C_ROLE):
             return True
     return False
 
 
-def _load_backend(sheets: dict[str, pd.DataFrame], _mem=None) -> Dataset:
-    # 选一个 KOL 明细 sheet：优先叫 KOL素材 的；否则从含 role 的 sheet 里筛 KOL
-    kol_df = None
-    for name, df in sheets.items():
-        if "kol" in name.lower() and _find_col(df, _C_ADNAME):
-            kol_df = df
-            break
-    if kol_df is None:
-        for df in sheets.values():
-            role = _find_col(df, _C_ROLE)
-            if role and _find_col(df, _C_ADNAME):
-                kol_df = df[df[role].astype(str).str.upper().str.contains("KOL")]
-                break
-    if kol_df is None or kol_df.empty:
+def _kol_frame_of_file(sheets: list[tuple[str, pd.DataFrame]]) -> pd.DataFrame | None:
+    """从「一个文件的若干 sheet」里取 KOL 明细：优先 KOL素材 sheet，否则按 role 筛。"""
+    for label, df in sheets:
+        sheet = label.split("::")[-1]
+        if "kol" in sheet.lower() and _find_col(df, _C_ADNAME):
+            return df
+    for _, df in sheets:
+        role = _find_col(df, _C_ROLE)
+        if role and _find_col(df, _C_ADNAME):
+            return df[df[role].astype(str).str.upper().str.contains("KOL")]
+    return None
+
+
+def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
+    # 关键：跨【所有文件】把 KOL 明细累加合并（每个文件取自己的 KOL素材 sheet）
+    by_file: dict[str, list[tuple[str, pd.DataFrame]]] = {}
+    for label, df in pairs:
+        by_file.setdefault(label.split("::")[0], []).append((label, df))
+
+    frames = []
+    for _, sheets in by_file.items():
+        kf = _kol_frame_of_file(sheets)
+        if kf is not None and not kf.empty:
+            frames.append(kf)
+    if not frames:
         raise ValueError("未在后台导出里找到 KOL 明细。")
+    kol_df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
     c_name = _find_col(kol_df, _C_ADNAME)
     c_spend = _find_col(kol_df, _C_SPEND)
@@ -147,7 +159,7 @@ def _load_backend(sheets: dict[str, pd.DataFrame], _mem=None) -> Dataset:
         g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(lang)))
         g.rows.append(row)
 
-    summary = _load_summary(sheets)
+    summary = _load_summary(pairs)
     langs = sorted(groups.values(), key=lambda g: sum(x.spend for x in g.rows),
                    reverse=True)
     products: dict[str, int] = {}
@@ -160,8 +172,8 @@ def _load_backend(sheets: dict[str, pd.DataFrame], _mem=None) -> Dataset:
                    products=products)
 
 
-def _load_summary(sheets: dict[str, pd.DataFrame]) -> Summary | None:
-    for name, df in sheets.items():
+def _load_summary(pairs: list[tuple[str, pd.DataFrame]]) -> Summary | None:
+    for name, df in pairs:
         if "汇总" in name or "summary" in name.lower():
             grp_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
             out: dict[str, dict] = {}
@@ -177,11 +189,11 @@ def _load_summary(sheets: dict[str, pd.DataFrame]) -> Summary | None:
 # 简单格式（兜底）：每个 sheet/CSV = 一个国家/语言
 # --------------------------------------------------------------------------
 
-def _load_simple(sheets: dict[str, pd.DataFrame]) -> Dataset:
+def _load_simple(pairs: list[tuple[str, pd.DataFrame]]) -> Dataset:
     rev = build_reverse_alias()
     groups: list[LangGroup] = []
     total = 0.0
-    for label, df in sheets.items():
+    for label, df in pairs:
         colmap = {}
         for col in df.columns:
             std = rev.get(normalize_key(col))
@@ -214,20 +226,27 @@ def _load_simple(sheets: dict[str, pd.DataFrame]) -> Dataset:
 
 def load(path: str | Path, mem=None) -> Dataset:
     p = Path(path)
-    sheets: dict[str, pd.DataFrame] = {}
+    # 用「列表」而不是「字典」收集所有 sheet，label 带文件名前缀，
+    # 避免多个文件里同名 sheet（如都叫 KOL素材）互相覆盖。
+    pairs: list[tuple[str, pd.DataFrame]] = []
+
+    def add_excel(f: Path):
+        for sheet, df in pd.read_excel(f, sheet_name=None).items():
+            pairs.append((f"{f.stem}::{sheet}", df))
+
     if p.is_dir():
         for f in sorted(p.iterdir()):
             if f.suffix.lower() == ".csv":
-                sheets[f.stem] = pd.read_csv(f)
+                pairs.append((f.stem, pd.read_csv(f)))
             elif f.suffix.lower() in (".xlsx", ".xls"):
-                sheets.update(pd.read_excel(f, sheet_name=None))
+                add_excel(f)
     elif p.suffix.lower() in (".xlsx", ".xls"):
-        sheets = pd.read_excel(p, sheet_name=None)
+        add_excel(p)
     elif p.suffix.lower() == ".csv":
-        sheets[p.stem] = pd.read_csv(p)
+        pairs.append((p.stem, pd.read_csv(p)))
     else:
         raise ValueError(f"不支持的输入类型: {p}")
 
-    if _is_backend_export(sheets):
-        return _load_backend(sheets, mem)
-    return _load_simple(sheets)
+    if _is_backend_export(pairs):
+        return _load_backend(pairs, mem)
+    return _load_simple(pairs)

@@ -107,6 +107,59 @@ def list_history(product: str) -> list[HistoryEntry]:
     return out
 
 
+# -------------------------- 草稿（可随时回来改） --------------------------
+
+def draft_dir(product: str) -> Path:
+    d = product_dir(product) / "drafts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def save_draft(product: str, created: str, meta: dict, market_dict: dict,
+               data: dict | None, src_data_dir: Path) -> str:
+    did = f"{re.sub(r'[^0-9A-Za-z-]', '', created) or 'draft'}-{uuid.uuid4().hex[:4]}"
+    d = draft_dir(product) / did
+    (d / "data").mkdir(parents=True, exist_ok=True)
+    if src_data_dir.exists():
+        for f in src_data_dir.iterdir():
+            if f.is_file():
+                shutil.copy(f, d / "data" / f.name)
+    (d / "draft.json").write_text(json.dumps({
+        "id": did, "product": product, "created": created, "meta": meta,
+        "market": market_dict, "data": data}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    return did
+
+
+def list_drafts(product: str) -> list[dict]:
+    root = draft_dir(product)
+    out = []
+    for d in root.iterdir() if root.exists() else []:
+        j = d / "draft.json"
+        if j.exists():
+            m = json.loads(j.read_text(encoding="utf-8"))
+            out.append({"id": m.get("id", d.name), "created": m.get("created", ""),
+                        "meta": m.get("meta", {}), "has_data": bool(m.get("data"))})
+    out.sort(key=lambda e: e["created"], reverse=True)
+    return out
+
+
+def get_draft(product: str, did: str) -> dict | None:
+    d = draft_dir(product) / _safe(did)
+    j = d / "draft.json"
+    if not j.exists():
+        return None
+    m = json.loads(j.read_text(encoding="utf-8"))
+    m["_data_dir"] = d / "data"
+    return m
+
+
+def delete_draft(product: str, did: str) -> None:
+    d = draft_dir(product) / _safe(did)
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def get_history(product: str, hid: str) -> HistoryEntry | None:
     d = product_dir(product) / "history" / _safe(hid)
     mp = d / "meta.json"

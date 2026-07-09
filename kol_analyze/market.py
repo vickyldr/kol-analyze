@@ -33,6 +33,16 @@ class MarketContext:
                     or self.kol_publish_share)
 
 
+def to_dict(m: "MarketContext") -> dict:
+    return {
+        "period_label": m.period_label, "grand_total_spend": m.grand_total_spend,
+        "kol_total_spend": m.kol_total_spend, "ad_country_share": m.ad_country_share,
+        "ad_country_spend": m.ad_country_spend, "kol_share_of_total": m.kol_share_of_total,
+        "kol_country_share": m.kol_country_share, "kol_publish_share": m.kol_publish_share,
+        "kol_publish_count": m.kol_publish_count, "notes": m.notes,
+    }
+
+
 def load_json(path: str | Path) -> MarketContext:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return from_dict(data)
