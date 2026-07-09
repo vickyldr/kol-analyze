@@ -79,6 +79,29 @@ def _wd(st: dict) -> Path:
     return store.session_dir(st["product"], st["sid"])
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
+
+
+def _save_project(st: dict, status=None, with_files=False, with_docx=False) -> str | None:
+    """把当前会话存/更新成一个项目（草稿或已完成），返回项目 id。"""
+    if "analysis" not in st:
+        return None
+    docx = None
+    if with_docx and st.get("gen", {}).get("file"):
+        docx = Path(st["gen"]["file"])
+    stats = {"creatives": sum(l.count for l in st["analysis"].langs),
+             "langs": len(st["analysis"].langs),
+             "migrations": len(st["sa"].migrations) if st.get("sa") else 0}
+    pid = store.save_draft(
+        st["product"], _now(), st.get("meta", {}), market.to_dict(st["market"]),
+        st.get("data"), _wd(st) / "data", did=st.get("project_id"),
+        status=status, stats=stats, staffing=st.get("staffing", ""),
+        copy_files=with_files, docx_path=docx)
+    st["project_id"] = pid
+    return pid
+
+
 # --------------------------------------------------------------------------
 # 核心：跑分析（不含 Claude 写作，秒级）
 # --------------------------------------------------------------------------
@@ -201,7 +224,11 @@ def api_analyze():
             shots.append(str(p))
     if shots:
         st["market"] = vision.read_screenshots(shots, SETTINGS)
-    return jsonify(_recompute(st))
+    st["project_id"] = None  # 新上传 = 新项目
+    snap = _recompute(st)
+    if snap.get("ok"):
+        _save_project(st, status="draft", with_files=True)
+    return jsonify(snap)
 
 
 @app.post("/api/supplement")
@@ -301,6 +328,7 @@ def api_generate():
                                   state["meta"]["title"], created, out, data, stats)
             state["data"] = data
             state["gen"] = {"status": "done", "file": str(out), "hid": entry.id}
+            _save_project(state, status="completed", with_docx=True)
         except Exception as e:  # noqa
             state["gen"] = {"status": "error", "error": str(e)}
 
@@ -500,10 +528,8 @@ def api_draft_save():
     st = _S()
     if "analysis" not in st:
         return jsonify({"ok": False, "error": "先上传并分析后再存草稿。"})
-    created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
-    did = store.save_draft(st["product"], created, st.get("meta", {}),
-                           market.to_dict(st["market"]), st.get("data"),
-                           _wd(st) / "data")
+    did = _save_project(st, with_files=True,
+                        with_docx=st.get("gen", {}).get("status") == "done")
     return jsonify({"ok": True, "id": did})
 
 
@@ -513,11 +539,32 @@ def api_drafts():
     return jsonify({"product": prod, "drafts": store.list_drafts(prod)})
 
 
+@app.get("/api/projects")
+def api_projects():
+    """首页画廊：跨所有产品列出项目（草稿/已完成）。"""
+    _sid()
+    return jsonify({"projects": store.list_all_projects(list(PRODUCTS)),
+                    "products": PRODUCTS})
+
+
+@app.get("/api/project/download")
+def api_project_download():
+    prod = request.args.get("product", "")
+    dr = store.get_draft(prod, request.args.get("id", ""))
+    if not dr or not dr.get("_report") or not Path(dr["_report"]).exists():
+        return jsonify({"ok": False, "error": "该项目还没有生成的文档。"}), 404
+    meta = dr.get("meta", {})
+    return send_file(dr["_report"], as_attachment=True,
+                     download_name=f"{meta.get('title', '复盘')}_{meta.get('period', '')}.docx")
+
+
 @app.post("/api/draft/delete")
 def api_draft_delete():
     st = _S()
-    store.delete_draft(st["product"], (request.get_json(silent=True) or {}).get("id", ""))
-    return jsonify({"ok": True, "drafts": store.list_drafts(st["product"])})
+    body = request.get_json(silent=True) or {}
+    prod = body.get("product") or st["product"]
+    store.delete_draft(prod, body.get("id", ""))
+    return jsonify({"ok": True})
 
 
 @app.post("/api/draft/resume")
@@ -529,10 +576,13 @@ def api_draft_resume():
     if not dr:
         return jsonify({"ok": False, "error": "草稿不存在。"})
     st["product"] = prod
+    st["project_id"] = dr.get("id")  # 续改同一项目，不新建
     st["meta"] = dr.get("meta", {})
     st["market"] = market.from_dict(dr.get("market", {}))
+    if dr.get("staffing"):
+        store.save_staffing(prod, dr["staffing"])
     st["force_complete"] = False
-    # 把草稿文件复制进本会话数据目录（先清空）
+    # 把项目文件复制进本会话数据目录（先清空）
     ddir = _wd(st) / "data"
     for f in ddir.iterdir():
         if f.is_file():

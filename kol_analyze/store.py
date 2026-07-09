@@ -126,19 +126,43 @@ def draft_dir(product: str) -> Path:
 
 
 def save_draft(product: str, created: str, meta: dict, market_dict: dict,
-               data: dict | None, src_data_dir: Path) -> str:
-    did = f"{re.sub(r'[^0-9A-Za-z-]', '', created) or 'draft'}-{uuid.uuid4().hex[:4]}"
-    d = draft_dir(product) / did
+               data: dict | None, src_data_dir: Path, did: str | None = None,
+               status: str | None = None, stats: dict | None = None,
+               staffing: str = "", copy_files: bool = True,
+               docx_path: Path | None = None) -> str:
+    """新建或更新一个「项目」（草稿/已完成）。did 传了就 upsert 到同一项目。"""
+    if not did:
+        did = f"{re.sub(r'[^0-9A-Za-z-]', '', created) or 'proj'}-{uuid.uuid4().hex[:4]}"
+    d = draft_dir(product) / _safe(did)
     (d / "data").mkdir(parents=True, exist_ok=True)
-    if src_data_dir.exists():
+    if copy_files and src_data_dir and src_data_dir.exists():
         for f in src_data_dir.iterdir():
             if f.is_file():
                 shutil.copy(f, d / "data" / f.name)
-    (d / "draft.json").write_text(json.dumps({
-        "id": did, "product": product, "created": created, "meta": meta,
-        "market": market_dict, "data": data}, ensure_ascii=False, indent=2),
-        encoding="utf-8")
+    if docx_path and Path(docx_path).exists():
+        shutil.copy(docx_path, d / "report.docx")
+    prev = {}
+    if (d / "draft.json").exists():
+        prev = json.loads((d / "draft.json").read_text(encoding="utf-8"))
+    payload = {
+        "id": did, "product": product,
+        "created": prev.get("created", created), "updated": created,
+        "meta": meta, "market": market_dict, "data": data,
+        "staffing": staffing,
+        "status": status or ("completed" if data else "draft"),
+        "stats": stats if stats is not None else prev.get("stats", {}),
+    }
+    (d / "draft.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
     return did
+
+
+def _project_card(m: dict, d: Path) -> dict:
+    return {"id": m.get("id", d.name), "product": m.get("product", ""),
+            "created": m.get("created", ""), "updated": m.get("updated", m.get("created", "")),
+            "meta": m.get("meta", {}), "status": m.get("status", "draft"),
+            "stats": m.get("stats", {}), "has_data": bool(m.get("data")),
+            "has_report": (d / "report.docx").exists()}
 
 
 def list_drafts(product: str) -> list[dict]:
@@ -147,10 +171,17 @@ def list_drafts(product: str) -> list[dict]:
     for d in root.iterdir() if root.exists() else []:
         j = d / "draft.json"
         if j.exists():
-            m = json.loads(j.read_text(encoding="utf-8"))
-            out.append({"id": m.get("id", d.name), "created": m.get("created", ""),
-                        "meta": m.get("meta", {}), "has_data": bool(m.get("data"))})
-    out.sort(key=lambda e: e["created"], reverse=True)
+            out.append(_project_card(json.loads(j.read_text(encoding="utf-8")), d))
+    out.sort(key=lambda e: e["updated"], reverse=True)
+    return out
+
+
+def list_all_projects(products) -> list[dict]:
+    """跨所有产品列出项目（给首页画廊）。"""
+    out = []
+    for prod in products:
+        out.extend(list_drafts(prod))
+    out.sort(key=lambda e: e["updated"], reverse=True)
     return out
 
 
@@ -161,6 +192,7 @@ def get_draft(product: str, did: str) -> dict | None:
         return None
     m = json.loads(j.read_text(encoding="utf-8"))
     m["_data_dir"] = d / "data"
+    m["_report"] = d / "report.docx"
     return m
 
 

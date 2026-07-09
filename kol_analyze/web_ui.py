@@ -139,17 +139,32 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
 .jumpchips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 14px}
 .jchip{padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);cursor:pointer;font-size:12.5px;color:var(--accent-ink);font-weight:600}
 .jchip:hover{background:var(--accent-soft);border-color:var(--accent)}
-@media(max-width:900px){.grid{grid-template-columns:1fr}.strip{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 17px;box-shadow:var(--shadow);cursor:pointer;transition:transform .12s,border-color .12s;display:flex;flex-direction:column;gap:8px}
+.pcard:hover{transform:translateY(-2px);border-color:var(--accent)}
+.pcard-hd{display:flex;align-items:flex-start;gap:10px}
+.pcard-title{font-weight:700;font-size:15px;line-height:1.35;flex:1}
+.pstatus{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pstatus.completed{background:var(--good-bg);color:var(--good)}
+.pstatus.draft{background:var(--warn-bg);color:var(--warn)}
+.pcard-sub{font-size:12.5px;color:var(--accent-ink)}
+.pcard-meta{font-size:11.5px;color:var(--ink-3)}
+.pcard-actions{display:flex;gap:8px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)}
+.pcard-actions a,.pcard-actions button{font-size:12px;padding:5px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);cursor:pointer;text-decoration:none;font-family:inherit}
+.pcard-actions .open{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+.pcard-actions .del{color:var(--crit);margin-left:auto}
+.empty{text-align:center;color:var(--ink-3);padding:50px 0;font-size:14px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.strip{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}.gallery{grid-template-columns:1fr}}
 </style></head><body>
 <div class="wrap">
   <div class="top">
-    <div class="brand"><div class="logo">复</div><div>KOL 月度复盘分析<small id="engineLabel">本地 · 引擎检测中…</small></div></div>
+    <div class="brand" style="cursor:pointer" onclick="goGallery()"><div class="logo">复</div><div>KOL 月度复盘分析<small id="engineLabel">本地 · 引擎检测中…</small></div></div>
     <div class="sp"></div>
     <button class="ghost" onclick="toggleTheme()">切换主题</button>
     <button class="ghost" id="draftBtn" onclick="saveDraft()" style="display:none">💾 保存草稿</button>
     <button class="primary" id="genBtn" onclick="generate()" disabled>生成复盘 docx ↓</button>
   </div>
-  <div class="steps">
+  <div class="steps" id="stepsBar" style="display:none">
     <div class="step active" id="st1" onclick="goUpload()"><span class="dot">1</span> 上传数据 + 大盘截图</div>
     <span class="arw">→</span>
     <div class="step" id="st2" onclick="goReviewStep()"><span class="dot">2</span> 审阅并修正命名</div>
@@ -157,8 +172,21 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
     <div class="step" id="st3" onclick="goEditorStep()"><span class="dot">3</span> 生成复盘文档</div>
   </div>
 
+  <!-- HOME: 项目画廊 -->
+  <div id="view-gallery">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap">
+      <h2 style="margin:0;font-size:23px;letter-spacing:.01em">项目</h2>
+      <select id="galleryFilter" onchange="renderGallery()" style="width:auto;min-width:130px"></select>
+      <div style="flex:1"></div>
+      <button class="primary" onclick="newProject()">+ 新建复盘</button>
+    </div>
+    <div id="galleryGrid" class="gallery"></div>
+    <div id="galleryEmpty" class="empty hidden">还没有项目 —— 点右上角「+ 新建复盘」上传数据开始。</div>
+  </div>
+
   <!-- STEP 1: upload -->
-  <div id="view-upload">
+  <div id="view-upload" class="hidden">
+    <div style="margin-bottom:12px"><button class="ghost" onclick="goGallery()">← 返回项目列表</button></div>
     <div class="card"><div class="bd">
       <div class="eyebrow">Step 1</div><h3 style="margin:4px 0 12px">上传本期数据</h3>
       <div class="row2" style="margin-bottom:14px">
@@ -190,16 +218,6 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
         <button class="primary" onclick="analyze()">开始分析 →</button>
         <span class="desc" id="uploadHint">大盘截图可留空，之后在页面里手填或补传。</span>
       </div>
-    </div></div>
-    <div class="card" id="draftsCard" style="display:none"><div class="bd">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <div class="eyebrow">Draft</div><h3 style="margin:0">草稿 · 继续上次未完成的</h3></div>
-      <div id="draftsList"></div>
-    </div></div>
-    <div class="card" id="historyCard" style="display:none"><div class="bd">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <div class="eyebrow">History</div><h3 style="margin:0" id="histTitle">历史复盘</h3></div>
-      <div id="historyList"></div>
     </div></div>
   </div>
 
@@ -357,18 +375,65 @@ async function loadHistory(){
     <span class="sp" style="flex:1"></span>
     <a class="ghost" style="text-decoration:none" href="/api/history/download?product=${encodeURIComponent(prod)}&id=${encodeURIComponent(e.id)}">下载 ↓</a></div>`).join('');
 }
-async function loadDrafts(){
-  let prod=el('product').value;
-  let j=await jget('/api/drafts?product='+encodeURIComponent(prod));
-  let d=j.drafts||[];
-  el('draftsCard').style.display=d.length?'block':'none';
-  el('draftsList').innerHTML=d.map(e=>`<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)">
-    <span class="lang">${(e.meta&&e.meta.period)||'草稿'}</span>
-    <span style="font-size:12.5px">${(e.meta&&e.meta.title)||''}</span>
-    <span class="desc">${e.created} · ${e.has_data?'已生成可续改':'仅数据'}</span>
-    <span style="flex:1"></span>
-    <button class="primary" style="padding:5px 12px" onclick="resumeDraft('${e.id}')">继续编辑</button>
-    <button class="ghost" onclick="delDraft('${e.id}')">删除</button></div>`).join('');
+async function loadDrafts(){ if(el('galleryGrid'))loadGallery(); }
+async function loadHistory(){ /* 已并入项目画廊 */ }
+
+// ---- 项目画廊（首页）----
+let PROJECTS=[];
+async function loadGallery(){
+  let j=await jget('/api/projects');
+  PROJECTS=j.projects||[]; PRODUCTS=j.products||PRODUCTS;
+  let f=el('galleryFilter');
+  if(f && !f.dataset.init){f.dataset.init='1';
+    f.innerHTML='<option value="">全部产品</option>'+Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');}
+  renderGallery();
+}
+function renderGallery(){
+  let flt=el('galleryFilter')?el('galleryFilter').value:'';
+  let list=PROJECTS.filter(p=>!flt||p.product===flt);
+  el('galleryEmpty').classList.toggle('hidden', list.length>0);
+  el('galleryGrid').innerHTML=list.map(p=>{
+    let m=p.meta||{}, s=p.stats||{};
+    let done=p.status==='completed';
+    let dl=p.has_report?`<a class="" href="/api/project/download?product=${encodeURIComponent(p.product)}&id=${encodeURIComponent(p.id)}" onclick="event.stopPropagation()">下载</a>`:'';
+    return `<div class="pcard" onclick="openProject('${p.product}','${p.id}')">
+      <div class="pcard-hd"><div class="pcard-title">${esc(m.title||'未命名复盘')}</div>
+        <span class="pstatus ${done?'completed':'draft'}">${done?'已完成':'草稿'}</span></div>
+      <div class="pcard-sub">${p.product} · ${(PRODUCTS[p.product]||'')} · ${esc(m.period||'')}</div>
+      <div class="pcard-meta">${s.creatives||0} 素材 · ${s.langs||0} 语言 · 更新 ${p.updated||p.created||''}</div>
+      <div class="pcard-actions">
+        <button class="open" onclick="event.stopPropagation();openProject('${p.product}','${p.id}')">打开</button>
+        ${dl}
+        <button class="del" onclick="event.stopPropagation();delProject('${p.product}','${p.id}')">删除</button>
+      </div></div>`;
+  }).join('');
+}
+async function openProject(product, id){
+  el('galleryGrid').innerHTML='<div class="empty"><span class="spin"></span> 正在打开…</div>';
+  let j=await post('/api/draft/resume',{id,product});
+  if(!j.ok){alert(j.error||'打开失败');loadGallery();return}
+  SNAP=j; el('draftBtn').style.display='inline-block';
+  if(el('product'))el('product').value=product;
+  if(j.has_data){ gotoEditor(); } else { showReview(); }
+}
+async function delProject(product,id){
+  if(!confirm('删除这个项目？（不可恢复）'))return;
+  await post('/api/draft/delete',{id,product}); loadGallery();
+}
+function goGallery(){
+  ['view-upload','view-review','view-done'].forEach(v=>el(v).classList.add('hidden'));
+  el('view-gallery').classList.remove('hidden');
+  el('stepsBar').style.display='none'; el('draftBtn').style.display='none';
+  el('genBtn').style.display='none';
+  loadGallery();
+}
+function newProject(){
+  dataFiles.length=0;shotFiles.length=0;window.hasReport=false;SNAP=null;
+  el('fDataList').textContent='';el('fShotList').innerHTML='';el('uploadHint').textContent='大盘截图可留空，之后在页面里手填或补传。';
+  ['view-gallery','view-review','view-done'].forEach(v=>el(v).classList.add('hidden'));
+  el('view-upload').classList.remove('hidden');
+  el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
+  el('st1').className='step active';el('st2').className='step';el('st3').className='step';
 }
 async function saveDraft(){
   if(window.hasReport){await saveReport();}
@@ -386,16 +451,15 @@ async function delDraft(id){
   if(!confirm('删除这个草稿？'))return;
   let j=await post('/api/draft/delete',{id}); loadDrafts();
 }
-function goUpload(){el('view-review').classList.add('hidden');el('view-done').classList.add('hidden');
-  el('view-upload').classList.remove('hidden');
-  el('st1').className='step active';el('st2').className=SNAP?'step done':'step';el('st3').className=window.hasReport?'step done':'step';
-  loadHistory();loadDrafts();}
-function goReviewStep(){if(!SNAP){return}el('view-upload').classList.add('hidden');el('view-done').classList.add('hidden');
-  el('view-review').classList.remove('hidden');
+function goUpload(){el('view-gallery').classList.add('hidden');el('view-review').classList.add('hidden');el('view-done').classList.add('hidden');
+  el('view-upload').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
+  el('st1').className='step active';el('st2').className=SNAP?'step done':'step';el('st3').className=window.hasReport?'step done':'step';}
+function goReviewStep(){if(!SNAP){return}el('view-gallery').classList.add('hidden');el('view-upload').classList.add('hidden');el('view-done').classList.add('hidden');
+  el('view-review').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
   el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';}
 function goEditorStep(){if(!window.hasReport){if(SNAP)alert('请先在第 2 步点「生成复盘 docx」');return}gotoEditor();}
-function gotoEditor(){el('view-upload').classList.add('hidden');el('view-review').classList.add('hidden');
-  el('view-done').classList.remove('hidden');
+function gotoEditor(){el('view-gallery').classList.add('hidden');el('view-upload').classList.add('hidden');el('view-review').classList.add('hidden');
+  el('view-done').classList.remove('hidden');el('stepsBar').style.display='flex';el('genBtn').style.display='inline-block';
   el('st1').className='step done';el('st2').className='step done';el('st3').className='step active';
   el('genBtn').disabled=false;el('draftBtn').style.display='inline-block';renderEditor();}
 async function analyze(){
@@ -416,11 +480,13 @@ async function analyze(){
   showReview();
 }
 function showReview(){
+  el('view-gallery').classList.add('hidden');
   el('view-upload').classList.add('hidden');
   el('view-review').classList.remove('hidden');
   el('view-done').classList.add('hidden');
+  el('stepsBar').style.display='flex';
   el('st1').className='step done';el('st2').className='step active';el('st3').className=window.hasReport?'step done':'step';
-  el('genBtn').disabled=false;el('draftBtn').style.display='inline-block';
+  el('genBtn').disabled=false;el('genBtn').style.display='inline-block';el('draftBtn').style.display='inline-block';
   render();
 }
 function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight();
@@ -681,7 +747,7 @@ let SNAP_ENGINE='Claude';
     PRODUCTS=e.products||{};
     el('product').innerHTML=Object.entries(PRODUCTS).map(([k,v])=>`<option value="${k}">${k} · ${v}</option>`).join('');
     el('prodHint').textContent='命名前缀 '+Object.keys(PRODUCTS).join(' / ')+' 都能识别；记忆库与历史按此产品分开保存。';
-    loadHistory();loadDrafts();
+    loadGallery();
   }catch(_){el('engineLabel').textContent='本地'}
 })();
 </script>
