@@ -411,13 +411,12 @@ function renderGallery(){
   el('galleryEmpty').classList.toggle('hidden', list.length>0);
   el('galleryGrid').innerHTML=list.map(p=>{
     let m=p.meta||{}, s=p.stats||{};
-    let done=p.status==='completed';
-    let dl=p.has_report?`<a class="" href="/api/project/download?product=${encodeURIComponent(p.product)}&id=${encodeURIComponent(p.id)}" onclick="event.stopPropagation()">下载</a>`:'';
+    let dl=p.has_report?`<a href="/api/project/download?product=${encodeURIComponent(p.product)}&id=${encodeURIComponent(p.id)}" onclick="event.stopPropagation()">下载</a>`:'';
+    let stat=(s.creatives?`${s.creatives} 素材 · ${s.langs||0} 语言 · `:'')+'更新 '+(p.updated||p.created||'');
     return `<div class="pcard" onclick="openProject('${p.product}','${p.id}')">
-      <div class="pcard-hd"><div class="pcard-title">${esc(m.title||'未命名复盘')}</div>
-        <span class="pstatus ${done?'completed':'draft'}">${done?'已完成':'草稿'}</span></div>
+      <div class="pcard-hd"><div class="pcard-title">${esc(m.title||'未命名复盘')}</div></div>
       <div class="pcard-sub">${p.product} · ${(PRODUCTS[p.product]||'')} · ${esc(m.period||'')}</div>
-      <div class="pcard-meta">${s.creatives||0} 素材 · ${s.langs||0} 语言 · 更新 ${p.updated||p.created||''}</div>
+      <div class="pcard-meta">${stat}</div>
       <div class="pcard-actions">
         <button class="open" onclick="event.stopPropagation();openProject('${p.product}','${p.id}')">打开</button>
         ${dl}
