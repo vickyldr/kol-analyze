@@ -106,6 +106,20 @@ def parse_ad_name(name: str) -> NameParts:
     return NameParts(lang=lang, influencer=influencer, play=play)
 
 
+def lang_from_filename(name: str) -> str | None:
+    """从文件名猜语言代码（一个文件=一个国家时的兜底），如 …_美国_… -> US。"""
+    s = str(name)
+    # 先看中文国家名（按长度降序，避免「韩国」误命中「国」）
+    for cn in sorted(COUNTRY_TO_LANG, key=len, reverse=True):
+        if cn in s:
+            return COUNTRY_TO_LANG[cn]
+    # 再看下划线包裹的 2 位语言码，如 _US_
+    m = re.search(r"[_-]([A-Za-z]{2})[_-]", s)
+    if m and m.group(1).upper() in LANG_NAME:
+        return m.group(1).upper()
+    return None
+
+
 def detect_product(name: str) -> str | None:
     """从 ad_name 里认出产品前缀（RM/RC/RO…）。"""
     for t in str(name).split("_"):

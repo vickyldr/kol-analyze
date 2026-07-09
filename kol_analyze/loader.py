@@ -110,21 +110,8 @@ def _kol_frame_of_file(sheets: list[tuple[str, pd.DataFrame]]) -> pd.DataFrame |
     return None
 
 
-def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
-    # 关键：跨【所有文件】把 KOL 明细累加合并（每个文件取自己的 KOL素材 sheet）
-    by_file: dict[str, list[tuple[str, pd.DataFrame]]] = {}
-    for label, df in pairs:
-        by_file.setdefault(label.split("::")[0], []).append((label, df))
-
-    frames = []
-    for _, sheets in by_file.items():
-        kf = _kol_frame_of_file(sheets)
-        if kf is not None and not kf.empty:
-            frames.append(kf)
-    if not frames:
-        raise ValueError("未在后台导出里找到 KOL 明细。")
-    kol_df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-
+def _accumulate_kol(kol_df: pd.DataFrame, groups: dict, _mem, file_lang: str | None) -> float:
+    """把一个文件的 KOL 明细并入 groups。file_lang：文件名兜底语言。返回该文件消耗。"""
     c_name = _find_col(kol_df, _C_ADNAME)
     c_spend = _find_col(kol_df, _C_SPEND)
     c_roi7 = _find_col(kol_df, _C_ROI7)
@@ -133,35 +120,52 @@ def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
     c_ctr = _find_col(kol_df, _C_CTR)
     c_plat = _find_col(kol_df, _C_PLATFORM)
 
-    groups: dict[str, LangGroup] = {}
     total_spend = 0.0
     for _, r in kol_df.iterrows():
         name = str(r[c_name]).strip()
         if not name or name.lower() == "nan":
             continue
         parts = country.parse_ad_name(name)
-        # 记忆库：语言纠正 + 红人别名
         forced_lang = _mem.override_lang(name, parts.play) if _mem else None
         influencer = _mem.alias_influencer(parts.influencer) if _mem else parts.influencer
-        lang = forced_lang or parts.lang or "OTHER"
+        # 语言优先级：记忆库纠正 > ad_name 解析 > 文件名兜底 > 其他
+        resolved = forced_lang or parts.lang or file_lang
+        lang = resolved or "OTHER"
         conv_dev = _to_float(r.get(c_conv)) or 0.0 if c_conv else 0.0
         spend = _to_float(r.get(c_spend)) or 0.0 if c_spend else 0.0
         total_spend += spend
         row = CreativeRow(
-            ad_name=name,
-            lang=forced_lang or parts.lang,
-            influencer=influencer,
-            play=country.clean_play(parts.play),
-            spend=spend,
+            ad_name=name, lang=resolved, influencer=influencer,
+            play=country.clean_play(parts.play), spend=spend,
             roi7=_to_float(r.get(c_roi7)) if c_roi7 else None,
             roi0=_to_float(r.get(c_roi0)) if c_roi0 else None,
-            converted=conv_dev > 0,
-            conv_devices=conv_dev,
+            converted=conv_dev > 0, conv_devices=conv_dev,
             ctr=_to_float(r.get(c_ctr)) if c_ctr else None,
             platform=(str(r.get(c_plat)).strip() if c_plat else None),
         )
         g = groups.setdefault(lang, LangGroup(lang=lang, name=country.lang_name(lang)))
         g.rows.append(row)
+    return total_spend
+
+
+def _load_backend(pairs: list[tuple[str, pd.DataFrame]], _mem=None) -> Dataset:
+    # 跨【所有文件】累加 KOL 明细；每个文件用自己的 KOL素材 sheet，
+    # 文件名（如 …_美国_…）作为语言兜底（ad_name 读不出语言时用它）。
+    by_file: dict[str, list[tuple[str, pd.DataFrame]]] = {}
+    for label, df in pairs:
+        by_file.setdefault(label.split("::")[0], []).append((label, df))
+
+    groups: dict[str, LangGroup] = {}
+    total_spend = 0.0
+    found = False
+    for fname, sheets in by_file.items():
+        kf = _kol_frame_of_file(sheets)
+        if kf is None or kf.empty:
+            continue
+        found = True
+        total_spend += _accumulate_kol(kf, groups, _mem, country.lang_from_filename(fname))
+    if not found:
+        raise ValueError("未在后台导出里找到 KOL 明细。")
 
     summary = _load_summary(pairs)
     langs = sorted(groups.values(), key=lambda g: sum(x.spend for x in g.rows),
