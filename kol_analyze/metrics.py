@@ -226,7 +226,7 @@ def compute(ds: Dataset, market: MarketContext, th: Thresholds,
 
     # 大盘有量、但 KOL 完全没覆盖的语言（纯缺口）
     coverage_gaps = []
-    for lang, share in sorted(ad_lang_share.items(), key=lambda x: -x[1]):
+    for lang, share in sorted(ad_lang_share.items(), key=lambda x: -(x[1] or 0)):
         if share >= 2.0 and lang not in covered:
             gaps.append(GapRow(
                 lang=lang, name=country.lang_name(lang), ad_market_share=share,

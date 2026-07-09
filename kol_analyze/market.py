@@ -48,16 +48,29 @@ def load_json(path: str | Path) -> MarketContext:
     return from_dict(data)
 
 
+def _num_dict(d) -> dict:
+    """只保留能转成数字的项，丢掉 None / 非数值（截图有时会读到 null）。"""
+    out = {}
+    for k, v in (d or {}).items():
+        if v is None:
+            continue
+        try:
+            out[str(k)] = float(str(v).replace("%", "").replace(",", "").strip())
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
 def from_dict(data: dict) -> MarketContext:
     return MarketContext(
         period_label=data.get("period_label"),
         grand_total_spend=data.get("grand_total_spend"),
         kol_total_spend=data.get("kol_total_spend"),
-        ad_country_share=data.get("ad_country_share", {}) or {},
-        ad_country_spend=data.get("ad_country_spend", {}) or {},
+        ad_country_share=_num_dict(data.get("ad_country_share")),
+        ad_country_spend=_num_dict(data.get("ad_country_spend")),
         kol_share_of_total=data.get("kol_share_of_total"),
-        kol_country_share=data.get("kol_country_share", {}) or {},
-        kol_publish_share=data.get("kol_publish_share", {}) or {},
-        kol_publish_count=data.get("kol_publish_count", {}) or {},
+        kol_country_share=_num_dict(data.get("kol_country_share")),
+        kol_publish_share=_num_dict(data.get("kol_publish_share")),
+        kol_publish_count=_num_dict(data.get("kol_publish_count")),
         notes=data.get("notes", []) or [],
     )

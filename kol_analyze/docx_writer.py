@@ -194,7 +194,7 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
     if m.ad_country_share:
         _heading(doc, "广告大盘 · 分国家消耗（设计+KOL）", 11, color="2F5496", before=8)
         tb, w = _mk_table(doc, ["国家", "消耗", "占比"], [Pt(120), Pt(90), Pt(70)])
-        for c, p in sorted(m.ad_country_share.items(), key=lambda x: -x[1])[:15]:
+        for c, p in sorted(m.ad_country_share.items(), key=lambda x: -(x[1] or 0))[:15]:
             cells = tb.add_row().cells
             _multiline(cells[0], c, size=9)
             _multiline(cells[1], f"{m.ad_country_spend.get(c, '')}", size=9)

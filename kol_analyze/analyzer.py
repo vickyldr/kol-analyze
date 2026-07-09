@@ -163,7 +163,7 @@ def _offline(a: Analysis, sa: ScriptAnalysis, th: Thresholds,
     ] if x)
 
     m = a.market
-    top_c = sorted(m.ad_country_share.items(), key=lambda x: -x[1])[:5]
+    top_c = sorted(m.ad_country_share.items(), key=lambda x: -(x[1] or 0))[:5]
     top_str = "、".join(f"{c} {p:.2f}%" for c, p in top_c) or "（无大盘截图数据）"
     ad_overview = (
         f"广告大盘（设计+KOL）总消耗约 {m.grand_total_spend or '—'}，"
