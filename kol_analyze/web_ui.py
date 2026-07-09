@@ -367,8 +367,17 @@ function renderBanners(){
   if(m.market){h+=`<div class="banner warn"><div>⚠️ <b>还没有大盘数据</b>：截图没上传或没识别到，「覆盖缺口」无法计算。
     <button class="ghost" style="margin-left:8px" onclick="supplementShots()">补传截图</button>
     <button class="ghost" onclick="openMarketForm()">手填大盘</button></div></div>`}
-  if(m.incomplete_langs&&m.incomplete_langs.length){h+=`<div class="banner info"><div>ℹ️ <b>${m.incomplete_langs.join(' / ')}</b> 的消耗数据疑似未填充（本期高度集中在单一语言）。
-    这些语言的加/减判断暂缓。若有它们的 excel，<button class="ghost" style="margin-left:6px" onclick="supplementData()">补传数据</button></div></div>`}
+  if(m.incomplete_langs&&m.incomplete_langs.length&&!m.force_complete&&!window._dismissInc){
+    h+=`<div class="banner info"><div style="flex:1">
+      ℹ️ 本期 KOL <b>消耗几乎都集中在「${m.dominant||'某语言'}」${m.dominant_share!=null?'（'+m.dominant_share+'%）':''}</b>。
+      下面这些语言<b>有产出、但花费≈0</b>：${m.incomplete_langs.join('、')}。
+      <div class="desc" style="margin-top:4px">工具拿不准这是「本月本来就没投放」还是「花费没导全」，所以暂不给它们下加/减结论。<b>你来判断（二选一）：</b></div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primary" style="padding:6px 12px" onclick="markComplete()">✓ 它们本月就没怎么投放（按真实判定）</button>
+        <button class="ghost" onclick="supplementData()">花费没导全 → 补传</button>
+        <button class="ghost" onclick="window._dismissInc=true;render()">忽略</button>
+      </div></div></div>`}
+  if(m.force_complete){h+=`<div class="banner info"><div>✓ 已按「数据完整」判定所有语言。<button class="ghost" style="margin-left:8px" onclick="unmarkComplete()">撤销</button></div></div>`}
   if(m.coverage_gaps&&m.coverage_gaps.length){h+=`<div class="banner warn"><div>🎯 <b>覆盖缺口</b>：${m.coverage_gaps.join('、')} —— 大盘有量但 KOL 没产出，可补产出。</div></div>`}
   el('banners').innerHTML=h;
 }
@@ -442,6 +451,8 @@ async function saveCorrect(){
 function openManual(){el('modal2').classList.add('show')}
 function closeModal2(){el('modal2').classList.remove('show')}
 async function post(url,body){return (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}
+async function markComplete(){SNAP=await post('/api/complete',{value:true});render()}
+async function unmarkComplete(){SNAP=await post('/api/complete',{value:false});render()}
 async function saveAlias(){SNAP=await post('/api/correct',{scope:'influencer',from:el('alFrom').value,to:el('alTo').value});el('alFrom').value=el('alTo').value='';render()}
 async function saveLang(){SNAP=await post('/api/correct',{scope:'lang',key:el('lgKey').value,to:el('lgTo').value});el('lgKey').value=el('lgTo').value='';render()}
 

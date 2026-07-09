@@ -178,7 +178,8 @@ def _verdict(ad_share, kol_share, pub_share, breakout, th, incomplete=False):
     return "维持", "产出与消耗大体匹配，维持并精选。"
 
 
-def compute(ds: Dataset, market: MarketContext, th: Thresholds) -> Analysis:
+def compute(ds: Dataset, market: MarketContext, th: Thresholds,
+            assume_complete: bool = False) -> Analysis:
     langs = [_lang_metrics(g, th) for g in ds.langs if g.rows]
     total = sum(l.spend for l in langs) or 1.0
     for l in langs:
@@ -201,7 +202,7 @@ def compute(ds: Dataset, market: MarketContext, th: Thresholds) -> Analysis:
 
     # excel 是否被单一语言主导（说明其余语言消耗可能未填充完整）
     top_share = max((l.spend_share for l in langs), default=0.0)
-    excel_incomplete = top_share >= 85.0
+    excel_incomplete = (top_share >= 85.0) and not assume_complete
     if excel_incomplete:
         dominant = max(langs, key=lambda l: l.spend_share).name
         market.notes.append(

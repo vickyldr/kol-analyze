@@ -96,13 +96,21 @@ def _recompute(st: dict) -> dict:
     if ds.kol_total_spend and not mkt.kol_total_spend:
         mkt.kol_total_spend = ds.kol_total_spend
 
-    analysis = metrics.compute(ds, mkt, SETTINGS.thresholds)
-    top = max((l.spend_share for l in analysis.langs), default=0.0)
-    incomplete = ({l.lang for l in analysis.langs if l.spend_share < 5.0}
-                  if top >= 85.0 else set())
+    analysis = metrics.compute(ds, mkt, SETTINGS.thresholds,
+                               assume_complete=bool(st.get("force_complete")))
+    langs_sorted = sorted(analysis.langs, key=lambda l: l.spend_share, reverse=True)
+    top = langs_sorted[0].spend_share if langs_sorted else 0.0
+    dominant = (langs_sorted[0].name if langs_sorted else "")
+    # 你确认过数据完整时（force_complete），就按真实情况判定、不再标「待补全」
+    if st.get("force_complete"):
+        incomplete = set()
+    else:
+        incomplete = ({l.lang for l in analysis.langs if l.spend_share < 5.0}
+                      if top >= 85.0 else set())
     sa = scripts.analyze(analysis.langs, SETTINGS.thresholds, incomplete, mem)
 
-    st.update(ds=ds, mem=mem, analysis=analysis, sa=sa, incomplete=incomplete)
+    st.update(ds=ds, mem=mem, analysis=analysis, sa=sa, incomplete=incomplete,
+              dominant=dominant, dominant_share=round(top, 1))
     return {"ok": True, **_snapshot(st)}
 
 
@@ -145,6 +153,9 @@ def _missing(st: dict) -> dict:
     mkt = st["market"]
     inc = [l.name for l in st["analysis"].langs if l.lang in st.get("incomplete", set())]
     return {"market": mkt.is_empty(), "incomplete_langs": sorted(inc),
+            "dominant": st.get("dominant", ""),
+            "dominant_share": st.get("dominant_share"),
+            "force_complete": bool(st.get("force_complete")),
             "coverage_gaps": st["analysis"].coverage_gaps}
 
 
@@ -215,6 +226,14 @@ def api_supplement():
 def api_market():
     st = _S()
     st["market"] = market.from_dict(request.get_json(force=True))
+    return jsonify(_recompute(st))
+
+
+@app.post("/api/complete")
+def api_complete():
+    """用户确认「这些语言本月就是没怎么投放，数据是完整的」-> 按真实情况判定。"""
+    st = _S()
+    st["force_complete"] = bool((request.get_json(silent=True) or {}).get("value", True))
     return jsonify(_recompute(st))
 
 
