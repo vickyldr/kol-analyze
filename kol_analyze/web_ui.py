@@ -88,10 +88,16 @@ input[type=text],textarea,select{width:100%;border:1px solid var(--line);border-
 .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
 .stat .k{font-size:11px;color:var(--ink-3);margin-bottom:4px}.stat .v{font-size:21px;font-weight:750}
 .stat .v span{font-size:12px;color:var(--ink-3);margin-left:2px}
-.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}
 .tbl th{text-align:left;font-weight:600;color:var(--ink-3);font-size:11px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--panel-2);position:sticky;top:0}
 .tbl td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-.adname{font-family:var(--mono);font-size:11px;color:var(--ink-2);word-break:break-all}
+.tbl th:nth-child(1),.tbl td:nth-child(1){width:40%}
+.tbl th:nth-child(2),.tbl td:nth-child(2){width:9%}
+.tbl th:nth-child(3),.tbl td:nth-child(3){width:15%}
+.tbl th:nth-child(4),.tbl td:nth-child(4){width:17%}
+.tbl th:nth-child(5),.tbl td:nth-child(5){width:7%}
+.tbl th:nth-child(6),.tbl td:nth-child(6){width:12%}
+.adname{font-family:var(--mono);font-size:11px;color:var(--ink-2);overflow-wrap:anywhere;word-break:normal}
 .lang{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent-ink);font-size:11px;font-weight:600;white-space:nowrap}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:7px;font-size:11px;font-weight:600;background:var(--panel-2);border:1px solid var(--line);color:var(--ink-2);margin:2px 3px 2px 0}
 .chip.s{background:var(--info-bg);color:var(--info);border-color:transparent}
@@ -312,6 +318,19 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
       <span class="desc" id="npMsg" style="margin-left:8px"></span></div>
   </div>
   <div class="mf"><div class="sp" style="flex:1"></div><button class="ghost" onclick="el('modal3').classList.remove('show')">关闭</button></div>
+</div></div>
+
+<!-- 手填大盘 modal -->
+<div class="modal-bg" id="modal4"><div class="modal">
+  <div class="mh">📊 手填大盘（分国家消耗占比）</div>
+  <div class="mb">
+    <div class="desc" style="margin-bottom:8px">大盘用于「覆盖缺口」（哪些国家有钱但 KOL 没产出）。若截图是每日折线图读不出占比，就在这里手填：每行 <b>国家=占比</b>。</div>
+    <textarea id="mkBox" rows="7" style="width:100%" placeholder="美国=33.99&#10;土耳其=10.77&#10;台湾=6.12&#10;德国=5.13&#10;巴西=4.97&#10;韩国=3.53&#10;泰国=2.37"></textarea>
+    <div style="margin-top:10px;max-width:220px"><label class="fld">KOL 占整体 %（可选）</label><input type="text" id="mkKol" placeholder="如 29.37"></div>
+  </div>
+  <div class="mf"><div class="sp" style="flex:1"></div>
+    <button class="ghost" onclick="el('modal4').classList.remove('show')">取消</button>
+    <button class="primary" onclick="submitMarket()">保存大盘</button></div>
 </div></div>
 
 <!-- manual market / alias modal -->
@@ -652,10 +671,13 @@ function supplementShots(){let i=document.createElement('input');i.type='file';i
   i.onchange=async()=>{let fd=new FormData();for(const f of i.files)fd.append('shots',f);
     el('banners').innerHTML='<div class="banner info"><span class="spin"></span> 正在识别截图…</div>';
     SNAP=await (await fetch('/api/supplement',{method:'POST',body:fd})).json();render()};i.click()}
-function openMarketForm(){
-  let s=prompt('粘贴大盘分国家占比，如：\n美国=33.99, 土耳其=10.77, 台湾=6.12 …');
-  if(!s)return;let obj={};s.split(/[,，\n]/).forEach(p=>{let m=p.split(/[=:：]/);if(m.length>=2){let v=parseFloat(m[1]);if(!isNaN(v))obj[m[0].trim()]=v}});
-  post('/api/market',{ad_country_share:obj}).then(j=>{SNAP=j;render()});
+function openMarketForm(){el('modal4').classList.add('show');
+  if(SNAP&&SNAP.missing) el('mkBox').focus();}
+async function submitMarket(){
+  let obj={}; el('mkBox').value.split(/[,，\n]/).forEach(p=>{let m=p.split(/[=:：]/);if(m.length>=2){let v=parseFloat(m[1]);if(!isNaN(v))obj[m[0].trim()]=v}});
+  let body={ad_country_share:obj};
+  let k=parseFloat(el('mkKol').value); if(!isNaN(k))body.kol_share_of_total=k;
+  let j=await post('/api/market',body); SNAP=j; el('modal4').classList.remove('show'); render();
 }
 
 // generate
