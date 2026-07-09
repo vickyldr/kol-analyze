@@ -24,27 +24,31 @@ def _extract_json(text: str) -> dict:
 
 
 def analyze(analysis: Analysis, scripts: ScriptAnalysis, settings: Settings,
-            title: str, period: str, mem=None) -> dict:
+            title: str, period: str, mem=None, staffing_facts: dict | None = None) -> dict:
+    staffing_facts = staffing_facts or {"has_staffing": False, "people": []}
     if engine.available() == "offline":
         if not settings.allow_offline_fallback:
             raise RuntimeError("无可用的 Claude 引擎（订阅 CLI / API key 都没有），"
                                "且未允许离线兜底。")
-        return _offline(analysis, scripts, settings.thresholds, title, period)
+        return _offline(analysis, scripts, settings.thresholds, title, period, staffing_facts)
 
     user = prompts.USER_TEMPLATE.format(
         title=title, period=period, style=prompts.style_block(mem),
         schema=json.dumps(prompts.OUTPUT_SCHEMA_HINT, ensure_ascii=False, indent=2),
         facts=json.dumps(prompts.build_facts(analysis), ensure_ascii=False, indent=2),
         script_facts=json.dumps(prompts.build_script_facts(scripts),
-                                ensure_ascii=False, indent=2))
+                                ensure_ascii=False, indent=2),
+        staffing_facts=json.dumps(staffing_facts, ensure_ascii=False, indent=2))
     text = engine.generate_text(prompts.SYSTEM, user, settings.model,
                                 settings.max_tokens)
     if not text:
-        return _offline(analysis, scripts, settings.thresholds, title, period)
+        return _offline(analysis, scripts, settings.thresholds, title, period, staffing_facts)
     try:
-        return _extract_json(text)
+        data = _extract_json(text)
+        data.setdefault("staffing_section", _offline_staffing(staffing_facts))
+        return data
     except (json.JSONDecodeError, ValueError):
-        return _offline(analysis, scripts, settings.thresholds, title, period)
+        return _offline(analysis, scripts, settings.thresholds, title, period, staffing_facts)
 
 
 def revise_passage(scope: str, text: str, instruction: str, reason: str,
@@ -144,8 +148,36 @@ def _script_section(sa: ScriptAnalysis) -> dict:
             "lang_strategies": strat}
 
 
+def _offline_staffing(sf: dict) -> dict:
+    if not sf.get("has_staffing"):
+        return {"overview": "本期未提供人力分工，如需分配建议可在页面填写分工后重生成。",
+                "people": []}
+    people = []
+    for p in sf.get("people", []):
+        up = [x["语言"] for x in p.get("负责语言", []) if x.get("档位") in ("加量", "高潜")]
+        down = [x["语言"] for x in p.get("负责语言", []) if x.get("档位") in ("削减", "减少")]
+        gapl = [x["语言"] for x in p.get("负责语言", []) if x.get("档位") in ("覆盖缺口",)]
+        parts = []
+        if up:
+            parts.append(f"加码：{'、'.join(up)}")
+        if down:
+            parts.append(f"降频提质：{'、'.join(down)}")
+        if gapl:
+            parts.append(f"补产出：{'、'.join(gapl)}")
+        if p.get("其他角色"):
+            parts.append(f"其他：{'、'.join(p['其他角色'])}保持")
+        people.append({"person": p["负责人"],
+                       "suggestion": "；".join(parts) or "维持现状，按各语言结论精选。"})
+    opp = sf.get("无人负责的机会语言", [])
+    ov = "分工与现状对照见下。"
+    if opp:
+        ov += "无人负责的机会语言：" + "、".join(
+            f"{o['语言']}（{o['档位']}）" for o in opp) + "，建议指派专人补产出。"
+    return {"overview": ov, "people": people}
+
+
 def _offline(a: Analysis, sa: ScriptAnalysis, th: Thresholds,
-             title: str, period: str) -> dict:
+             title: str, period: str, staffing_facts: dict | None = None) -> dict:
     add = [g.name for g in a.gaps if g.verdict == "加量"]
     cut = [g.name for g in a.gaps if g.verdict in ("削减", "减少")]
     gap = a.coverage_gaps + [g.name for g in a.gaps
@@ -180,5 +212,6 @@ def _offline(a: Analysis, sa: ScriptAnalysis, th: Thresholds,
         },
         "gap_summary": gap_summary,
         "script_section": _script_section(sa),
+        "staffing_section": _offline_staffing(staffing_facts or {"has_staffing": False}),
         "langs": [_lang_block(l) for l in a.langs],
     }

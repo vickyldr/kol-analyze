@@ -207,6 +207,14 @@ textarea.grow{overflow:hidden;min-height:42px;line-height:1.6;padding:10px 12px;
   <div id="view-review" class="hidden">
     <div class="strip" id="strip"></div>
     <div id="banners"></div>
+    <div class="card"><div class="bd">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div class="eyebrow">Staffing</div><h3 style="margin:0">人力分工（可选）</h3>
+        <div class="sp" style="flex:1"></div>
+        <button class="ghost" onclick="saveStaffing()">保存分工</button></div>
+      <div class="desc" style="margin-bottom:6px">每行一人：<b>姓名: 地区/语言, …</b>（如 <code>景雨: 西语, 台湾, 阿语</code>；「采买」这类角色也可写）。填了就会在复盘里生成「五、人力分工与调整建议」。</div>
+      <textarea id="staffingBox" class="grow" style="width:100%;min-height:70px" placeholder="景雨: 西语, 台湾, 阿语&#10;杨岚平: 土语, 意, 英&#10;章若冰: 葡语, 泰语, 采买"></textarea>
+    </div></div>
     <div class="grid">
       <div class="card">
         <div class="hd"><div><div class="eyebrow">Step 2</div><h3>素材命名审阅 · 修正分类</h3></div>
@@ -415,7 +423,13 @@ function showReview(){
   el('genBtn').disabled=false;el('draftBtn').style.display='inline-block';
   render();
 }
-function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight()}
+function render(){renderStrip();renderBanners();renderRows();renderMemory();renderInsight();
+  let sb=el('staffingBox'); if(sb&&!sb.value&&SNAP.staffing){sb.value=SNAP.staffing;if(window.autoGrow)autoGrow(sb);}}
+async function saveStaffing(){
+  let j=await post('/api/staffing',{text:el('staffingBox').value});
+  if(j&&j.stats){SNAP=j;render();}
+  alert('✓ 分工已保存。点「生成复盘 docx」后，文档里会多出「五、人力分工与调整建议」，给每个人加/减/补的动作。');
+}
 function renderStrip(){
   let s=SNAP.stats;
   el('engineLabel').textContent='本地 · '+SNAP_ENGINE+' · '+(SNAP.product_name||SNAP.product||'');
@@ -570,16 +584,17 @@ function blockHtml(i){
     </div></div>`;
 }
 function groupBlocks(){
-  let ad=[],gap=[],script=[],langOrder=[],langMap={};
+  let ad=[],gap=[],script=[],staff=[],langOrder=[],langMap={};
   BLOCKS.forEach((b,i)=>{
     let k=b.key;
     if(k.indexOf('ad_section')===0) ad.push(i);
     else if(k==='gap_summary') gap.push(i);
     else if(k.indexOf('script_section.overview')===0||k.indexOf('script_section.migrations')===0||k.indexOf('script_section.format_suggestions')===0) script.push(i);
+    else if(k.indexOf('staffing_section')===0) staff.push(i);
     else{let nm=(b.label.split(' · ')[0]||'其他').trim();
       if(!langMap[nm]){langMap[nm]=[];langOrder.push(nm);} langMap[nm].push(i);}
   });
-  return {ad,gap,script,langOrder,langMap};
+  return {ad,gap,script,staff,langOrder,langMap};
 }
 function section(title, idxs){
   if(!idxs.length) return '';
@@ -613,6 +628,7 @@ async function renderEditor(){
     ${section('一、广告部份', g.ad)}
     ${section('二、缺口分析', g.gap)}
     ${section('四、素材/脚本维度', g.script)}
+    ${section('五、人力分工与调整建议', g.staff)}
     <div class="sechd">三、KOL 分语言素材分析（点语言展开）</div>
     <div class="jumpchips">${chips}</div>
     ${panels}`;

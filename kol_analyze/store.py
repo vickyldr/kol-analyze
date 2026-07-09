@@ -41,6 +41,16 @@ def memory_path(product: str) -> Path:
     return product_dir(product) / "memory.json"
 
 
+def load_staffing(product: str) -> str:
+    """读该产品的人力分工文本（每行一人）。"""
+    p = product_dir(product) / "staffing.txt"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def save_staffing(product: str, text: str) -> None:
+    (product_dir(product) / "staffing.txt").write_text(text or "", encoding="utf-8")
+
+
 def session_dir(product: str, sid: str) -> Path:
     d = product_dir(product) / "sessions" / sid
     (d / "data").mkdir(parents=True, exist_ok=True)

@@ -253,6 +253,24 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
     # ---- 四、素材/脚本维度分析 ----
     _render_scripts(doc, data, scripts)
 
+    # ---- 五、人力分工与调整建议 ----
+    staff = data.get("staffing_section") or {}
+    if staff.get("overview") or staff.get("people"):
+        _heading(doc, "五、人力分工与调整建议", 15, before=14)
+        if staff.get("overview"):
+            _body(doc, staff["overview"])
+        ppl = staff.get("people") or []
+        if ppl:
+            tb, w = _mk_table(doc, ["负责人", "调整建议"], [Pt(70), Pt(360)])
+            for i, pr in enumerate(ppl):
+                cells = tb.add_row().cells
+                _multiline(cells[0], pr.get("person", ""), bold_first=True, size=9.5)
+                _multiline(cells[1], pr.get("suggestion", ""), size=9.5)
+                if i % 2 == 1:
+                    for c in cells:
+                        _shade(c, _ALT_BG)
+            _apply_widths(tb, w)
+
     foot = doc.add_paragraph()
     foot.paragraph_format.space_before = Pt(12)
     fr = foot.add_run("本报告由 KOL 复盘分析工具自动生成，请结合业务判断复核。")

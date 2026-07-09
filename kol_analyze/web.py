@@ -20,7 +20,7 @@ from pathlib import Path
 from flask import (Flask, jsonify, redirect, request, send_file, session)
 
 from . import (analyzer, docx_writer, engine, loader, market, memory,
-               metrics, scripts, store, vision)
+               metrics, scripts, staffing, store, vision)
 from .config import PRODUCTS, Settings
 from .web_ui import LOGIN_PAGE, PAGE
 
@@ -109,6 +109,7 @@ def _recompute(st: dict) -> dict:
                       if top >= 85.0 else set())
     sa = scripts.analyze(analysis.langs, SETTINGS.thresholds, incomplete, mem)
 
+    st["staffing"] = store.load_staffing(st["product"])
     st.update(ds=ds, mem=mem, analysis=analysis, sa=sa, incomplete=incomplete,
               dominant=dominant, dominant_share=round(top, 1))
     return {"ok": True, **_snapshot(st)}
@@ -146,6 +147,7 @@ def _snapshot(st: dict) -> dict:
         "rows": rows, "gaps": gaps, "migrations": migrations,
         "memory": memory.to_dict(mem), "missing": _missing(st),
         "notes": st["market"].notes, "history": _history_list(st["product"]),
+        "staffing": st.get("staffing", ""),
     }
 
 
@@ -229,6 +231,21 @@ def api_market():
     return jsonify(_recompute(st))
 
 
+@app.get("/api/staffing")
+def api_staffing_get():
+    prod = request.args.get("product") or _S()["product"]
+    return jsonify({"product": prod, "text": store.load_staffing(prod)})
+
+
+@app.post("/api/staffing")
+def api_staffing_set():
+    st = _S()
+    text = (request.get_json(silent=True) or {}).get("text", "")
+    store.save_staffing(st["product"], text)
+    st["staffing"] = text
+    return jsonify(_recompute(st) if "analysis" in st else {"ok": True})
+
+
 @app.post("/api/complete")
 def api_complete():
     """用户确认「这些语言本月就是没怎么投放，数据是完整的」-> 按真实情况判定。"""
@@ -269,9 +286,11 @@ def api_generate():
 
     def worker(state):
         try:
+            sf = staffing.build_facts(state.get("staffing", ""),
+                                      state["analysis"].gaps, state["sa"].lang_strategies)
             data = analyzer.analyze(state["analysis"], state["sa"], SETTINGS,
                                     state["meta"]["title"], state["meta"]["period"],
-                                    mem=state.get("mem"))
+                                    mem=state.get("mem"), staffing_facts=sf)
             out = _wd(state) / "复盘.docx"
             docx_writer.render(data, state["analysis"], state["sa"], out)
             created = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M")
@@ -360,6 +379,10 @@ def _blocks(data):
     for i, s in enumerate(data.get("script_section", {}).get("lang_strategies", [])):
         nm = s.get("name", f"语言{i}")
         add(f"script_section.lang_strategies.{i}.suggestion", f"{nm} · 脚本策略")
+    add("staffing_section.overview", "五、人力分工 · 总述")
+    for i, p in enumerate(data.get("staffing_section", {}).get("people", [])):
+        nm = p.get("person", f"成员{i}")
+        add(f"staffing_section.people.{i}.suggestion", f"{nm} · 调整建议")
     return out
 
 

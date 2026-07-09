@@ -37,6 +37,13 @@ OUTPUT_SCHEMA_HINT = {
              "suggestion": "该语言脚本策略：继续做哪些强脚本、砍哪些弱脚本、要不要挖/探索新脚本"}
         ],
     },
+    "staffing_section": {
+        "overview": "五、人力分工与调整建议的总述：当前分工是否匹配各语言现状；有没有『机会语言(覆盖缺口/高潜)』没人负责该分给谁；谁的盘子该增/该减",
+        "people": [
+            {"person": "负责人姓名",
+             "suggestion": "针对这个人的具体调整建议：他负责的语言里哪些该加码(加量/高潜)、哪些该降频(削减)、哪些是新机会要补；结合脚本策略给动作"}
+        ],
+    },
     "langs": [
         {
             "name": "语言名，如 土耳其语",
@@ -138,6 +145,10 @@ USER_TEMPLATE = """下面是本期聚合好的客观数据（JSON）。据此产
 
 【素材/脚本维度】客观数据（用于 script_section）：
 {script_facts}
+
+【人力分工】当前分工 + 各人负责语言的现状（用于 staffing_section；
+若 has_staffing 为 false 就把 staffing_section 的 people 给空数组、overview 说明未提供分工）：
+{staffing_facts}
 """
 
 
