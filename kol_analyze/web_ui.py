@@ -795,12 +795,12 @@ async function renderEditor(){
       <span class="desc" id="saveState" style="align-self:center"></span>
     </div>
     ${section('一、广告部份', g.ad)}
-    ${section('二、缺口分析', g.gap)}
-    ${section('四、素材/脚本维度', g.script)}
-    ${section('五、人力分工与调整建议', g.staff)}
-    <div class="sechd">三、KOL 分语言素材分析（点语言展开）</div>
+    <div class="sechd">二、KOL 分语言素材分析（含档位/缺口，点语言展开）</div>
+    ${g.gap.map(blockHtml).join('')}
     <div class="jumpchips">${chips}</div>
-    ${panels}`;
+    ${panels}
+    ${section('三、脚本/形式洞察', g.script)}
+    ${section('四、人力分工与调整建议', g.staff)}`;
   // 顶部区块自适应高度
   document.querySelectorAll('#genBody .sechd ~ .blk textarea, #genBody > .blk textarea').forEach(autoGrow);
   BLOCKS.forEach((b,i)=>{let t=el('ta-'+i);if(t&&t.offsetParent)autoGrow(t);});

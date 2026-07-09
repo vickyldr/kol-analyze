@@ -1,7 +1,8 @@
 """渲染复盘 .docx：
   一、广告部份（大盘/设计vsKOL/KOL分国家 + 概述）
-  二、产出 vs 消耗 缺口分析（一句话总结 + 缺口表）—— 核心
-  三、KOL 分语言素材分析（明细表）
+  二、KOL 分语言素材分析（核心；一句话总结 + 分语言明细，档位/缺口已并入本表）
+  三、脚本/形式洞察（跨语言，精简要点）
+  四、人力分工与调整建议
 """
 
 from __future__ import annotations
@@ -94,71 +95,28 @@ def _pct(v):
     return f"{v:.2f}%" if v is not None else "—"
 
 
-_STRAT_COLOR = {
-    "维持精选": "555555", "探索新脚本": "1565C0",
-    "挖新脚本": "E65100", "收窄精做": "C62828", "待补全": "8E24AA",
-}
-
-
 def _render_scripts(doc, data, sa: ScriptAnalysis):
-    _heading(doc, "四、素材/脚本维度分析（跨语言）", 15, before=14)
+    """脚本/形式洞察：只留概述 + 少量可执行要点（迁移/补形式），不再拆多张表。"""
+    _heading(doc, "三、脚本/形式洞察（跨语言）", 15, before=14)
     sec = data.get("script_section", {})
     if sec.get("overview"):
         _body(doc, sec["overview"])
 
-    # 4.1 跨语言迁移建议
-    _heading(doc, "4.1 跨语言脚本/形式迁移建议", 11.5, color="2F5496", before=8)
-    migs = sec.get("migrations") or []
-    for mg in migs:
+    # 迁移建议 + 形式补齐，合并去重成一份要点清单（最多 6 条）
+    bullets = []
+    seen = set()
+    for x in (sec.get("migrations") or []) + (sec.get("format_suggestions") or []):
+        x = str(x).strip()
+        if not x or x in seen or "暂无" in x or "较均衡" in x:
+            continue
+        seen.add(x)
+        bullets.append(x)
+    for b in bullets[:6]:
         p = doc.add_paragraph(style="List Bullet")
-        p.add_run(mg).font.size = Pt(9.5)
-
-    # 迁移数据表（脚本 × 跑出语言 × 建议扩展）
-    if sa.migrations:
-        tb, w = _mk_table(doc, ["脚本", "已跑出语言", "覆盖语言数", "建议扩展到"],
-                          [Pt(110), Pt(90), Pt(70), Pt(150)])
-        for r in sa.migrations[:12]:
-            cells = tb.add_row().cells
-            _multiline(cells[0], r.theme, bold_first=True, size=9)
-            _multiline(cells[1], r.best_lang or "—", size=9)
-            _multiline(cells[2], str(len(r.cells)), size=9)
-            _multiline(cells[3], "、".join(r.migrate_to), size=9, color="1565C0")
-        _apply_widths(tb, w)
-
-    # 4.2 形式覆盖
-    _heading(doc, "4.2 形式覆盖（口播 / 街采 / MV模板 …）", 11.5, color="2F5496", before=8)
-    for fs in sec.get("format_suggestions") or []:
-        p = doc.add_paragraph(style="List Bullet")
-        p.add_run(fs).font.size = Pt(9.5)
-    if sa.formats:
-        tb, w = _mk_table(doc, ["形式", "在用语言（条数）", "建议试的语言"],
-                          [Pt(70), Pt(180), Pt(140)])
-        for f in sa.formats:
-            cells = tb.add_row().cells
-            _multiline(cells[0], f.fmt, bold_first=True, size=9)
-            _multiline(cells[1], "、".join(f"{k}{v}" for k, v in
-                                          sorted(f.present.items(), key=lambda x: -x[1])),
-                       size=8.5)
-            _multiline(cells[2], "、".join(f.suggest_to) or "—", size=9, color="1565C0")
-        _apply_widths(tb, w)
-
-    # 4.3 各语言脚本策略
-    _heading(doc, "4.3 各语言脚本策略（继续 / 优化 / 砍 / 挖新脚本）", 11.5,
-             color="2F5496", before=8)
-    if sa.lang_strategies:
-        tb, w = _mk_table(doc, ["语言", "脚本数", "跑出率", "档位", "建议"],
-                          [Pt(60), Pt(46), Pt(50), Pt(64), Pt(200)])
-        sug_by_name = {s["name"]: s["suggestion"]
-                       for s in sec.get("lang_strategies", []) if s.get("name")}
-        for s in sa.lang_strategies:
-            cells = tb.add_row().cells
-            _multiline(cells[0], s.name, bold_first=True, size=9)
-            _multiline(cells[1], str(s.diversity), size=9)
-            _multiline(cells[2], _pct(s.breakout), size=9)
-            _multiline(cells[3], s.verdict, size=9,
-                       color=_STRAT_COLOR.get(s.verdict, "555555"))
-            _multiline(cells[4], sug_by_name.get(s.name, s.suggestion), size=9)
-        _apply_widths(tb, w)
+        p.add_run(b).font.size = Pt(9.5)
+    if not bullets:
+        _body(doc, "本期各语言脚本/形式覆盖较均衡，暂无明显迁移点。", size=9.5,
+              color="777777")
 
 
 def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) -> Path:
@@ -204,8 +162,8 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
     if m.kol_share_of_total is not None:
         _body(doc, f"设计师 vs KOL：KOL 占整体约 {m.kol_share_of_total:.2f}%。", size=10)
 
-    # ---- 二、缺口分析 ----
-    _heading(doc, "二、产出 vs 消耗 · 缺口分析", 15, before=14)
+    # ---- 二、KOL 分语言素材分析（核心；档位/缺口已并入本表）----
+    _heading(doc, "二、KOL 分语言素材分析", 15, before=14)
     if data.get("gap_summary"):
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(4)
@@ -216,33 +174,39 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
         run2 = p.add_run(data["gap_summary"])
         run2.font.size = Pt(10.5)
 
-    if analysis.gaps:
-        headers = ["语言", "大盘消耗占比", "KOL消耗占比", "产出占比", "跑出率", "档位", "一句话结论"]
-        widths = [Pt(56), Pt(70), Pt(64), Pt(56), Pt(50), Pt(48), Pt(150)]
-        tb, w = _mk_table(doc, headers, widths)
-        for g in analysis.gaps:
-            cells = tb.add_row().cells
-            _multiline(cells[0], g.name, bold_first=True, size=9)
-            _multiline(cells[1], _pct(g.ad_market_share), size=9)
-            _multiline(cells[2], _pct(g.kol_spend_share), size=9)
-            _multiline(cells[3], _pct(g.publish_share), size=9)
-            _multiline(cells[4], _pct(g.breakout_rate), size=9)
-            _multiline(cells[5], g.verdict, size=9,
-                       color=_VERDICT_COLOR.get(g.verdict, "555555"))
-            _multiline(cells[6], g.one_line, size=8.5)
-        _apply_widths(tb, w)
-
-    # ---- 三、KOL 分语言素材分析 ----
-    _heading(doc, "三、KOL 分语言素材分析", 15, before=14)
-    headers = ["语言", "转化情况", "素材分析", "todo"]
-    widths = [Pt(70), Pt(120), Pt(170), Pt(140)]
+    gap_by = {g.name: g for g in analysis.gaps}
+    headers = ["语言 · 档位", "现状（大盘/KOL/产出/跑出）", "素材分析", "todo"]
+    widths = [Pt(84), Pt(116), Pt(160), Pt(140)]
     tb, w = _mk_table(doc, headers, widths)
     for idx, lb in enumerate(data.get("langs", [])):
         cells = tb.add_row().cells
         name = lb.get("name", "")
         one = lb.get("one_liner", "")
-        _multiline(cells[0], name + (f"\n{one}" if one else ""), bold_first=True)
-        _multiline(cells[1], lb.get("conversion", ""))
+        g = gap_by.get(name)
+
+        # 语言 · 档位 · 一句话定位（档位上色）
+        c0 = cells[0]
+        c0.text = ""
+        r = c0.paragraphs[0].add_run(name)
+        r.bold = True
+        r.font.size = Pt(9.5)
+        if g and g.verdict:
+            pv = c0.add_paragraph()
+            rv = pv.add_run(f"【{g.verdict}】")
+            rv.bold = True
+            rv.font.size = Pt(9)
+            rv.font.color.rgb = RGBColor.from_string(
+                _VERDICT_COLOR.get(g.verdict, "555555"))
+        if one:
+            po = c0.add_paragraph()
+            ro = po.add_run(one)
+            ro.font.size = Pt(8.5)
+            ro.font.color.rgb = RGBColor.from_string("777777")
+
+        # 现状：大盘占比（缺口维度）+ 该语言 KOL 现状（消耗/产出/跑出）
+        stat = ((f"大盘消耗 {_pct(g.ad_market_share)}\n" if g else "")
+                + lb.get("conversion", ""))
+        _multiline(cells[1], stat, size=9)
         _multiline(cells[2], lb.get("creative_analysis", ""))
         _multiline(cells[3], lb.get("todo", ""))
         if idx % 2 == 1:
@@ -250,13 +214,13 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
                 _shade(c, _ALT_BG)
     _apply_widths(tb, w)
 
-    # ---- 四、素材/脚本维度分析 ----
+    # ---- 三、脚本/形式洞察 ----
     _render_scripts(doc, data, scripts)
 
-    # ---- 五、人力分工与调整建议 ----
+    # ---- 四、人力分工与调整建议 ----
     staff = data.get("staffing_section") or {}
     if staff.get("overview") or staff.get("people"):
-        _heading(doc, "五、人力分工与调整建议", 15, before=14)
+        _heading(doc, "四、人力分工与调整建议", 15, before=14)
         if staff.get("overview"):
             _body(doc, staff["overview"])
         ppl = staff.get("people") or []

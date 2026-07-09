@@ -485,8 +485,8 @@ def _blocks(data):
 
     add("ad_section.overview", "一、广告部份 · 概述")
     add("ad_section.caveat", "口径提醒")
-    add("gap_summary", "二、缺口分析 · 一句话总结")
-    add("script_section.overview", "四、素材/脚本 · 概述")
+    add("gap_summary", "二、KOL 分语言 · 一句话总结")
+    add("script_section.overview", "三、脚本/形式 · 概述")
     add("script_section.migrations", "跨语言迁移建议（每行一条）")
     add("script_section.format_suggestions", "形式覆盖建议（每行一条）")
     for i, l in enumerate(data.get("langs", [])):
@@ -495,10 +495,7 @@ def _blocks(data):
         add(f"langs.{i}.conversion", f"{nm} · 转化情况")
         add(f"langs.{i}.creative_analysis", f"{nm} · 素材分析")
         add(f"langs.{i}.todo", f"{nm} · todo")
-    for i, s in enumerate(data.get("script_section", {}).get("lang_strategies", [])):
-        nm = s.get("name", f"语言{i}")
-        add(f"script_section.lang_strategies.{i}.suggestion", f"{nm} · 脚本策略")
-    add("staffing_section.overview", "五、人力分工 · 总述")
+    add("staffing_section.overview", "四、人力分工 · 总述")
     for i, p in enumerate(data.get("staffing_section", {}).get("people", [])):
         nm = p.get("person", f"成员{i}")
         add(f"staffing_section.people.{i}.suggestion", f"{nm} · 调整建议")
