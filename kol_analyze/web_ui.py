@@ -799,7 +799,7 @@ async function renderEditor(){
     ${g.gap.map(blockHtml).join('')}
     <div class="jumpchips">${chips}</div>
     ${panels}
-    ${section('三、脚本/形式洞察', g.script)}
+    ${section('三、素材/脚本维度', g.script)}
     ${section('四、人力分工与调整建议', g.staff)}`;
   // 顶部区块自适应高度
   document.querySelectorAll('#genBody .sechd ~ .blk textarea, #genBody > .blk textarea').forEach(autoGrow);

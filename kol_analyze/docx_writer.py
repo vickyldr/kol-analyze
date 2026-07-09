@@ -1,7 +1,7 @@
 """渲染复盘 .docx：
   一、广告部份（大盘/设计vsKOL/KOL分国家 + 概述）
   二、KOL 分语言素材分析（核心；一句话总结 + 分语言明细，档位/缺口已并入本表）
-  三、脚本/形式洞察（跨语言，精简要点）
+  三、素材/脚本维度分析（跨语言：迁移 / 形式覆盖 / 各语言脚本策略）
   四、人力分工与调整建议
 """
 
@@ -95,28 +95,71 @@ def _pct(v):
     return f"{v:.2f}%" if v is not None else "—"
 
 
+_STRAT_COLOR = {
+    "维持精选": "555555", "探索新脚本": "1565C0",
+    "挖新脚本": "E65100", "收窄精做": "C62828", "待补全": "8E24AA",
+}
+
+
 def _render_scripts(doc, data, sa: ScriptAnalysis):
-    """脚本/形式洞察：只留概述 + 少量可执行要点（迁移/补形式），不再拆多张表。"""
-    _heading(doc, "三、脚本/形式洞察（跨语言）", 15, before=14)
+    _heading(doc, "三、素材/脚本维度分析（跨语言）", 15, before=14)
     sec = data.get("script_section", {})
     if sec.get("overview"):
         _body(doc, sec["overview"])
 
-    # 迁移建议 + 形式补齐，合并去重成一份要点清单（最多 6 条）
-    bullets = []
-    seen = set()
-    for x in (sec.get("migrations") or []) + (sec.get("format_suggestions") or []):
-        x = str(x).strip()
-        if not x or x in seen or "暂无" in x or "较均衡" in x:
-            continue
-        seen.add(x)
-        bullets.append(x)
-    for b in bullets[:6]:
+    # 3.1 跨语言迁移建议
+    _heading(doc, "3.1 跨语言脚本/形式迁移建议", 11.5, color="2F5496", before=8)
+    migs = sec.get("migrations") or []
+    for mg in migs:
         p = doc.add_paragraph(style="List Bullet")
-        p.add_run(b).font.size = Pt(9.5)
-    if not bullets:
-        _body(doc, "本期各语言脚本/形式覆盖较均衡，暂无明显迁移点。", size=9.5,
-              color="777777")
+        p.add_run(mg).font.size = Pt(9.5)
+
+    # 迁移数据表（脚本 × 跑出语言 × 建议扩展）
+    if sa.migrations:
+        tb, w = _mk_table(doc, ["脚本", "已跑出语言", "覆盖语言数", "建议扩展到"],
+                          [Pt(110), Pt(90), Pt(70), Pt(150)])
+        for r in sa.migrations[:12]:
+            cells = tb.add_row().cells
+            _multiline(cells[0], r.theme, bold_first=True, size=9)
+            _multiline(cells[1], r.best_lang or "—", size=9)
+            _multiline(cells[2], str(len(r.cells)), size=9)
+            _multiline(cells[3], "、".join(r.migrate_to), size=9, color="1565C0")
+        _apply_widths(tb, w)
+
+    # 3.2 形式覆盖
+    _heading(doc, "3.2 形式覆盖（口播 / 街采 / MV模板 …）", 11.5, color="2F5496", before=8)
+    for fs in sec.get("format_suggestions") or []:
+        p = doc.add_paragraph(style="List Bullet")
+        p.add_run(fs).font.size = Pt(9.5)
+    if sa.formats:
+        tb, w = _mk_table(doc, ["形式", "在用语言（条数）", "建议试的语言"],
+                          [Pt(70), Pt(180), Pt(140)])
+        for f in sa.formats:
+            cells = tb.add_row().cells
+            _multiline(cells[0], f.fmt, bold_first=True, size=9)
+            _multiline(cells[1], "、".join(f"{k}{v}" for k, v in
+                                          sorted(f.present.items(), key=lambda x: -x[1])),
+                       size=8.5)
+            _multiline(cells[2], "、".join(f.suggest_to) or "—", size=9, color="1565C0")
+        _apply_widths(tb, w)
+
+    # 3.3 各语言脚本策略
+    _heading(doc, "3.3 各语言脚本策略（继续 / 优化 / 砍 / 挖新脚本）", 11.5,
+             color="2F5496", before=8)
+    if sa.lang_strategies:
+        tb, w = _mk_table(doc, ["语言", "脚本数", "跑出率", "档位", "建议"],
+                          [Pt(60), Pt(46), Pt(50), Pt(64), Pt(200)])
+        sug_by_name = {s["name"]: s["suggestion"]
+                       for s in sec.get("lang_strategies", []) if s.get("name")}
+        for s in sa.lang_strategies:
+            cells = tb.add_row().cells
+            _multiline(cells[0], s.name, bold_first=True, size=9)
+            _multiline(cells[1], str(s.diversity), size=9)
+            _multiline(cells[2], _pct(s.breakout), size=9)
+            _multiline(cells[3], s.verdict, size=9,
+                       color=_STRAT_COLOR.get(s.verdict, "555555"))
+            _multiline(cells[4], sug_by_name.get(s.name, s.suggestion), size=9)
+        _apply_widths(tb, w)
 
 
 def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) -> Path:
