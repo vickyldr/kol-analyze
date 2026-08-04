@@ -136,6 +136,7 @@ def _recompute(st: dict) -> dict:
         incomplete = ({l.lang for l in analysis.langs if l.spend_share < 5.0}
                       if top >= 85.0 else set())
     sa = scripts.analyze(analysis.langs, SETTINGS.thresholds, incomplete, mem)
+    sa.review = scripts.script_review(ds, mkt, mem)
 
     st["staffing"] = store.load_staffing(st["product"])
     st["sop"] = store.load_sop(st["product"])
@@ -486,14 +487,12 @@ def _blocks(data):
     add("ad_section.overview", "一、广告部份 · 概述")
     add("ad_section.caveat", "口径提醒")
     add("gap_summary", "二、KOL 分语言 · 一句话总结")
-    add("script_section.overview", "三、素材/脚本 · 概述")
-    add("script_section.migrations", "跨语言迁移建议（每行一条）")
-    add("script_section.format_suggestions", "形式覆盖建议（每行一条）")
     for i, l in enumerate(data.get("langs", [])):
         nm = l.get("name", f"语言{i}")
         add(f"langs.{i}.one_liner", f"{nm} · 定位")
         add(f"langs.{i}.todo", f"{nm} · 国家级建议")
         # 现状数值与逐条脚本明细由数据直接渲染（不可编辑，保证透明可复核）
+    # 三、脚本维度（内容脚本×效率比）为纯数据表，直接由 review 渲染，不可编辑
     for i, s in enumerate(data.get("script_section", {}).get("lang_strategies", [])):
         nm = s.get("name", f"语言{i}")
         add(f"script_section.lang_strategies.{i}.suggestion", f"{nm} · 脚本策略")

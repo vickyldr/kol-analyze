@@ -799,7 +799,9 @@ async function renderEditor(){
     ${g.gap.map(blockHtml).join('')}
     <div class="jumpchips">${chips}</div>
     ${panels}
-    ${section('三、素材/脚本维度', g.script)}
+    <div class="sechd">三、脚本维度分析（内容脚本 × 效率比）</div>
+    <div class="banner info" style="text-align:left">📊 这一节是<b>纯数据表</b>（脚本层全盘 / 跨盘警示 / AI热歌内部 / 各盘明细），
+      按 ad_name 自动抽内容脚本、算效率比与跑出率，直接写进 docx，无需手改。下载文档即可查看。</div>
     ${section('四、人力分工与调整建议', g.staff)}`;
   // 顶部区块自适应高度
   document.querySelectorAll('#genBody .sechd ~ .blk textarea, #genBody > .blk textarea').forEach(autoGrow);

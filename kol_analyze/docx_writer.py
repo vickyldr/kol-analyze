@@ -95,11 +95,6 @@ def _pct(v):
     return f"{v:.2f}%" if v is not None else "—"
 
 
-_STRAT_COLOR = {
-    "维持精选": "555555", "探索新脚本": "1565C0",
-    "挖新脚本": "E65100", "收窄精做": "C62828", "待补全": "8E24AA",
-}
-
 # 单条素材（脚本）级建议的档 -> 颜色
 _TIER_COLOR = {"放大": "2E7D32", "优化": "1565C0", "再试": "1565C0",
                "砍": "C62828", "淘汰": "999999"}
@@ -215,65 +210,98 @@ def _lang_detail(doc, lb, g, lm):
                   size=8, color="999999")
 
 
+# 脚本层档位 -> 颜色
+_SVERDICT_COLOR = {"加发布": "2E7D32", "微调": "555555",
+                   "提质不提量": "C62828", "收缩": "C62828", "收缩/量极小": "999999"}
+
+
+def _eff_str(e):
+    return f"{e:.2f}" if e is not None else "—"
+
+
+def _stat_table(doc, stats, has_pub, top=None):
+    """渲染一张脚本层表（全盘或某地区）。"""
+    if has_pub:
+        headers = ["脚本", "条数", "发布占比", "消耗占比", "效率比", "跑出率", "档位建议"]
+        widths = [Pt(110), Pt(40), Pt(56), Pt(56), Pt(46), Pt(48), Pt(78)]
+    else:
+        headers = ["脚本", "条数", "条数占比", "消耗占比", "效率比", "跑出率", "档位建议"]
+        widths = [Pt(120), Pt(42), Pt(56), Pt(56), Pt(46), Pt(48), Pt(78)]
+    tb, w = _mk_table(doc, headers, widths)
+    for idx, s in enumerate(stats if top is None else stats[:top]):
+        cells = tb.add_row().cells
+        _multiline(cells[0], s.name, bold_first=True, size=8.5)
+        _multiline(cells[1], str(s.n), size=8.5)
+        _multiline(cells[2],
+                   f"{s.publish_share:.1f}%" if has_pub else f"{s.count_share:.1f}%",
+                   size=8.5)
+        _multiline(cells[3], f"{s.spend_share:.1f}%", size=8.5)
+        _multiline(cells[4], _eff_str(s.eff), size=8.5)
+        _multiline(cells[5], f"{s.breakout:.0f}%", size=8.5)
+        _multiline(cells[6], s.verdict, size=8.5,
+                   color=_SVERDICT_COLOR.get(s.verdict, "555555"))
+        if idx % 2 == 1:
+            for cc in cells:
+                _shade(cc, _ALT_BG)
+    _apply_widths(tb, w)
+
+
 def _render_scripts(doc, data, sa: ScriptAnalysis):
-    _heading(doc, "三、素材/脚本维度分析（跨语言）", 15, before=14)
-    sec = data.get("script_section", {})
-    if sec.get("overview"):
-        _body(doc, sec["overview"])
+    _heading(doc, "三、脚本维度分析（内容脚本 × 效率比）", 15, before=14)
+    rv = getattr(sa, "review", None)
+    if not rv or not rv.overall:
+        _body(doc, "本期无可识别的脚本明细。", size=9.5, color="777777")
+        return
 
-    # 3.1 跨语言迁移建议
-    _heading(doc, "3.1 跨语言脚本/形式迁移建议", 11.5, color="2F5496", before=8)
-    migs = sec.get("migrations") or []
-    for mg in migs:
-        p = doc.add_paragraph(style="List Bullet")
-        p.add_run(mg).font.size = Pt(9.5)
+    base = "发布占比" if rv.has_publish else "条数占比"
+    _body(doc,
+          f"口径：脚本=内容母题（口播/mv/街采是形式、图生/文生是方法，均不计脚本）；"
+          f"跑出=ROI0>0；效率比=消耗占比÷{base}，>1.2 该加发布、<0.6 提质不提量。",
+          size=9, color="555555")
 
-    # 迁移数据表（脚本 × 跑出语言 × 建议扩展）
-    if sa.migrations:
-        tb, w = _mk_table(doc, ["脚本", "已跑出语言", "覆盖语言数", "建议扩展到"],
-                          [Pt(110), Pt(90), Pt(70), Pt(150)])
-        for r in sa.migrations[:12]:
-            cells = tb.add_row().cells
-            _multiline(cells[0], r.theme, bold_first=True, size=9)
-            _multiline(cells[1], r.best_lang or "—", size=9)
-            _multiline(cells[2], str(len(r.cells)), size=9)
-            _multiline(cells[3], "、".join(r.migrate_to), size=9, color="1565C0")
-        _apply_widths(tb, w)
-
-    # 3.2 形式覆盖
-    _heading(doc, "3.2 形式覆盖（口播 / 街采 / MV模板 …）", 11.5, color="2F5496", before=8)
-    for fs in sec.get("format_suggestions") or []:
-        p = doc.add_paragraph(style="List Bullet")
-        p.add_run(fs).font.size = Pt(9.5)
-    if sa.formats:
-        tb, w = _mk_table(doc, ["形式", "在用语言（条数）", "建议试的语言"],
-                          [Pt(70), Pt(180), Pt(140)])
-        for f in sa.formats:
-            cells = tb.add_row().cells
-            _multiline(cells[0], f.fmt, bold_first=True, size=9)
-            _multiline(cells[1], "、".join(f"{k}{v}" for k, v in
-                                          sorted(f.present.items(), key=lambda x: -x[1])),
-                       size=8.5)
-            _multiline(cells[2], "、".join(f.suggest_to) or "—", size=9, color="1565C0")
-        _apply_widths(tb, w)
-
-    # 3.3 各语言脚本策略
-    _heading(doc, "3.3 各语言脚本策略（继续 / 优化 / 砍 / 挖新脚本）", 11.5,
+    # 3.1 脚本层（全盘）
+    _heading(doc, "3.1 脚本层 · 全盘（该加发布 / 提质 / 收缩）", 11.5,
              color="2F5496", before=8)
-    if sa.lang_strategies:
-        tb, w = _mk_table(doc, ["语言", "脚本数", "跑出率", "档位", "建议"],
-                          [Pt(60), Pt(46), Pt(50), Pt(64), Pt(200)])
-        sug_by_name = {s["name"]: s["suggestion"]
-                       for s in sec.get("lang_strategies", []) if s.get("name")}
-        for s in sa.lang_strategies:
+    _stat_table(doc, rv.overall, rv.has_publish)
+
+    # 3.2 跨盘警示
+    if rv.warnings:
+        _heading(doc, "3.2 跨盘警示（同脚本两极分化，禁止照搬）", 11.5,
+                 color="2F5496", before=8)
+        for wn in rv.warnings:
+            p = doc.add_paragraph(style="List Bullet")
+            r = p.add_run(wn.detail)
+            r.font.size = Pt(9.5)
+            r.font.color.rgb = RGBColor.from_string("C62828")
+
+    # 3.3 AI热歌内部（功能录屏 vs 普通自制热歌）
+    if rv.ai_split:
+        _heading(doc, "3.3 AI热歌内部 · 功能录屏 vs 普通自制热歌", 11.5,
+                 color="2F5496", before=8)
+        tb, w = _mk_table(doc, ["盘", "功能录屏(条)", "录屏跑出", "普通热歌(条)", "普通跑出"],
+                          [Pt(90), Pt(80), Pt(60), Pt(80), Pt(60)])
+        for a in rv.ai_split:
             cells = tb.add_row().cells
-            _multiline(cells[0], s.name, bold_first=True, size=9)
-            _multiline(cells[1], str(s.diversity), size=9)
-            _multiline(cells[2], _pct(s.breakout), size=9)
-            _multiline(cells[3], s.verdict, size=9,
-                       color=_STRAT_COLOR.get(s.verdict, "555555"))
-            _multiline(cells[4], sug_by_name.get(s.name, s.suggestion), size=9)
+            _multiline(cells[0], a.region, bold_first=True, size=9)
+            _multiline(cells[1], str(a.demo_n), size=9)
+            _multiline(cells[2], f"{a.demo_run:.0f}%" if a.demo_run is not None else "—",
+                       size=9)
+            _multiline(cells[3], str(a.normal_n), size=9)
+            _multiline(cells[4],
+                       f"{a.normal_run:.0f}%" if a.normal_run is not None else "—", size=9)
         _apply_widths(tb, w)
+        _body(doc, "注：功能录屏与普通自制热歌跑出率跨盘常两极（如 TR 录屏更强），别跨盘照搬。",
+              size=8.5, color="999999")
+
+    # 3.4 各地区脚本明细（消耗前几）
+    if rv.regions:
+        _heading(doc, "3.4 各盘脚本明细（消耗前 6）", 11.5, color="2F5496", before=8)
+        for reg in rv.regions:
+            if not reg.scripts:
+                continue
+            _body(doc, f"{reg.region}（{reg.n} 条 · 消耗 {reg.spend:.0f}）",
+                  size=9.5, color="1F3864")
+            _stat_table(doc, reg.scripts, False, top=6)
 
 
 def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) -> Path:
