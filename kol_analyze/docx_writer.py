@@ -1,6 +1,6 @@
 """渲染复盘 .docx：
   一、广告部份（大盘/设计vsKOL/KOL分国家 + 概述）
-  二、KOL 分语言素材分析（核心；一句话总结 + 分语言明细，档位/缺口已并入本表）
+  二、KOL 分语言素材分析（核心；两层建议：每个语言=现状+国家级建议+脚本级明细表）
   三、素材/脚本维度分析（跨语言：迁移 / 形式覆盖 / 各语言脚本策略）
   四、人力分工与调整建议
 """
@@ -99,6 +99,120 @@ _STRAT_COLOR = {
     "维持精选": "555555", "探索新脚本": "1565C0",
     "挖新脚本": "E65100", "收窄精做": "C62828", "待补全": "8E24AA",
 }
+
+# 单条素材（脚本）级建议的档 -> 颜色
+_TIER_COLOR = {"放大": "2E7D32", "优化": "1565C0", "再试": "1565C0",
+               "砍": "C62828", "淘汰": "999999"}
+
+
+def _script_advice(tier, conv, share) -> tuple[str, str]:
+    """按单条素材（同红人·玩法合并后）的真实数据，给档 + 一句脚本级建议。"""
+    if tier == "strong":
+        return "放大", "主力，继续放大 + 精选红人复刻，可作跨语言母版"
+    if tier == "potential":
+        if conv and conv > 0:
+            return "优化", "有转化但 ROI 未达标，优化脚本 / 换红人后再加量"
+        return "再试", "信号一般，换红人或小改脚本再验证一轮"
+    # weak
+    if share >= 0.12:
+        return "砍", "ROI 偏低仍在吃量，收量或换方向"
+    return "淘汰", "弱版，淘汰或仅留极小量测试"
+
+
+_TIER_ORDER = {"strong": 2, "potential": 1, "weak": 0}
+
+
+def _merge_scripts(creatives) -> list[dict]:
+    """把同一「红人·玩法」的多条（btta/日期版本）合并：累计消耗、取最高 ROI7、
+    累计转化、取更强的档。返回按消耗降序的行。"""
+    merged: dict[str, dict] = {}
+    for c in creatives:
+        key = " · ".join(x for x in [c.influencer, c.play] if x) or c.ad_name
+        m = merged.get(key)
+        if not m:
+            merged[key] = {"label": key, "spend": c.spend, "roi7": c.roi7,
+                           "conv": c.conv_devices or 0.0, "platform": c.platform,
+                           "tier": c.tier, "share": c.spend_share_in_lang}
+        else:
+            m["spend"] += c.spend
+            m["roi7"] = max(m["roi7"] or 0.0, c.roi7 or 0.0)
+            m["conv"] += c.conv_devices or 0.0
+            m["share"] += c.spend_share_in_lang
+            m["platform"] = m["platform"] or c.platform
+            if _TIER_ORDER[c.tier] > _TIER_ORDER[m["tier"]]:
+                m["tier"] = c.tier
+    return sorted(merged.values(), key=lambda x: -x["spend"])
+
+
+def _lang_detail(doc, lb, g, lm):
+    """一个语言两层建议：语言级（现状+国家级建议）+ 脚本级明细表（有数据支持）。"""
+    name = lb.get("name", "")
+
+    # 语言标题：语言 + 【档位】（同段混合上色）
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(12)
+    p.paragraph_format.space_after = Pt(2)
+    rn = p.add_run(name)
+    rn.bold = True
+    rn.font.size = Pt(12.5)
+    rn.font.color.rgb = RGBColor.from_string("1F3864")
+    if g and g.verdict:
+        rv = p.add_run(f"　【{g.verdict}】")
+        rv.bold = True
+        rv.font.size = Pt(11)
+        rv.font.color.rgb = RGBColor.from_string(
+            _VERDICT_COLOR.get(g.verdict, "555555"))
+
+    # 现状数据行（透明、可复核）
+    facts = []
+    if g:
+        facts += [f"大盘 {_pct(g.ad_market_share)}", f"KOL消耗 {_pct(g.kol_spend_share)}",
+                  f"产出 {_pct(g.publish_share)}", f"跑出 {_pct(g.breakout_rate)}"]
+    if lm:
+        facts += [f"均ROI7 {_pct(lm.avg_roi7)}", f"{lm.count}条"]
+    if facts:
+        _body(doc, "现状：" + " · ".join(facts), size=9, color="555555")
+
+    # 语言级（国家级）建议
+    todo = lb.get("todo") or lb.get("one_liner") or ""
+    if todo:
+        pp = doc.add_paragraph()
+        pp.paragraph_format.space_after = Pt(3)
+        rr = pp.add_run("国家级建议：")
+        rr.bold = True
+        rr.font.size = Pt(9.5)
+        rr.font.color.rgb = RGBColor.from_string("2F5496")
+        for i, line in enumerate(str(todo).split("\n")):
+            if i:
+                pp = doc.add_paragraph()
+                pp.paragraph_format.space_after = Pt(1)
+            tr = pp.add_run(line)
+            tr.font.size = Pt(9.5)
+
+    # 脚本级明细表：每条素材（同红人·玩法合并）的数据 + 脚本级建议
+    rows = _merge_scripts(lm.creatives) if lm else []
+    if rows:
+        tb, w = _mk_table(
+            doc, ["红人 · 玩法", "消耗", "ROI7", "转化", "平台", "脚本级建议"],
+            [Pt(150), Pt(50), Pt(46), Pt(40), Pt(44), Pt(170)])
+        for idx, m in enumerate(rows[:8]):
+            cells = tb.add_row().cells
+            _multiline(cells[0], m["label"], bold_first=True, size=8.5)
+            _multiline(cells[1], f"{m['spend']:.0f}", size=8.5)
+            _multiline(cells[2],
+                       _pct(m["roi7"] * 100) if m["roi7"] is not None else "—", size=8.5)
+            _multiline(cells[3], f"{m['conv']:.0f}" if m["conv"] else "—", size=8.5)
+            _multiline(cells[4], m["platform"] or "—", size=8.5)
+            tier_cn, advice = _script_advice(m["tier"], m["conv"], m["share"])
+            _multiline(cells[5], f"【{tier_cn}】{advice}", size=8.5,
+                       color=_TIER_COLOR.get(tier_cn, "555555"))
+            if idx % 2 == 1:
+                for cc in cells:
+                    _shade(cc, _ALT_BG)
+        _apply_widths(tb, w)
+        if len(rows) > 8:
+            _body(doc, f"（共 {len(rows)} 个脚本，上表列消耗前 8）",
+                  size=8, color="999999")
 
 
 def _render_scripts(doc, data, sa: ScriptAnalysis):
@@ -218,44 +332,10 @@ def render(data: dict, analysis: Analysis, scripts: ScriptAnalysis, out_path) ->
         run2.font.size = Pt(10.5)
 
     gap_by = {g.name: g for g in analysis.gaps}
-    headers = ["语言 · 档位", "现状（大盘/KOL/产出/跑出）", "素材分析", "todo"]
-    widths = [Pt(84), Pt(116), Pt(160), Pt(140)]
-    tb, w = _mk_table(doc, headers, widths)
-    for idx, lb in enumerate(data.get("langs", [])):
-        cells = tb.add_row().cells
+    lm_by = {l.name: l for l in analysis.langs}
+    for lb in data.get("langs", []):
         name = lb.get("name", "")
-        one = lb.get("one_liner", "")
-        g = gap_by.get(name)
-
-        # 语言 · 档位 · 一句话定位（档位上色）
-        c0 = cells[0]
-        c0.text = ""
-        r = c0.paragraphs[0].add_run(name)
-        r.bold = True
-        r.font.size = Pt(9.5)
-        if g and g.verdict:
-            pv = c0.add_paragraph()
-            rv = pv.add_run(f"【{g.verdict}】")
-            rv.bold = True
-            rv.font.size = Pt(9)
-            rv.font.color.rgb = RGBColor.from_string(
-                _VERDICT_COLOR.get(g.verdict, "555555"))
-        if one:
-            po = c0.add_paragraph()
-            ro = po.add_run(one)
-            ro.font.size = Pt(8.5)
-            ro.font.color.rgb = RGBColor.from_string("777777")
-
-        # 现状：大盘占比（缺口维度）+ 该语言 KOL 现状（消耗/产出/跑出）
-        stat = ((f"大盘消耗 {_pct(g.ad_market_share)}\n" if g else "")
-                + lb.get("conversion", ""))
-        _multiline(cells[1], stat, size=9)
-        _multiline(cells[2], lb.get("creative_analysis", ""))
-        _multiline(cells[3], lb.get("todo", ""))
-        if idx % 2 == 1:
-            for c in cells:
-                _shade(c, _ALT_BG)
-    _apply_widths(tb, w)
+        _lang_detail(doc, lb, gap_by.get(name), lm_by.get(name))
 
     # ---- 三、脚本/形式洞察 ----
     _render_scripts(doc, data, scripts)

@@ -492,9 +492,8 @@ def _blocks(data):
     for i, l in enumerate(data.get("langs", [])):
         nm = l.get("name", f"语言{i}")
         add(f"langs.{i}.one_liner", f"{nm} · 定位")
-        add(f"langs.{i}.conversion", f"{nm} · 转化情况")
-        add(f"langs.{i}.creative_analysis", f"{nm} · 素材分析")
-        add(f"langs.{i}.todo", f"{nm} · todo")
+        add(f"langs.{i}.todo", f"{nm} · 国家级建议")
+        # 现状数值与逐条脚本明细由数据直接渲染（不可编辑，保证透明可复核）
     for i, s in enumerate(data.get("script_section", {}).get("lang_strategies", [])):
         nm = s.get("name", f"语言{i}")
         add(f"script_section.lang_strategies.{i}.suggestion", f"{nm} · 脚本策略")
